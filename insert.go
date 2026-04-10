@@ -2,219 +2,302 @@ package eloq
 
 import (
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 )
 
 type InsertBuilder struct {
-	*commonBuilder
-
-	table string
-	rows  []map[string]interface{}
-
-	conflictColumns []string
-	updateValues    map[string]interface{}
-	doNothing       bool
+	baseBuilder
+	table      string
+	values     []map[string]interface{}
+	returning  []string
+	onConflict *onConflictClause
 }
+
+type onConflictClause struct {
+	target     string
+	doNothing  bool
+	doUpdates  []string
+	doUpdateKV map[string]interface{}
+}
+
+type OnConflictBuilder struct {
+	insertBuilder *InsertBuilder
+	target        string
+}
+
+func (ocb *OnConflictBuilder) DoNothing() *InsertBuilder {
+	ocb.insertBuilder.onConflict = &onConflictClause{
+		target:    ocb.target,
+		doNothing: true,
+	}
+	return ocb.insertBuilder
+}
+
+func (ocb *OnConflictBuilder) DoUpdate(updates map[string]interface{}) *InsertBuilder {
+	ocb.insertBuilder.onConflict = &onConflictClause{
+		target:     ocb.target,
+		doNothing:  false,
+		doUpdateKV: updates,
+	}
+	return ocb.insertBuilder
+}
+
+var ErrNoTable = errors.New("eloq: insert has no table")
+var ErrNoValues = errors.New("eloq: insert has no values")
+var ErrEmptyValues = errors.New("eloq: insert has empty values")
 
 func Insert(table string) *InsertBuilder {
-	b := &InsertBuilder{
-		commonBuilder: &commonBuilder{
-			placeholder: Question,
-			quoteStyle:  Backtick,
-			comments:    []string{},
-			queryName:   "",
-			meta:        map[string]string{},
-		},
-		table: table,
-	}
-
-	return b
-}
-
-func (b *commonBuilder) Insert(table string) *InsertBuilder {
 	return &InsertBuilder{
-		commonBuilder: b.clone(),
-		table:         table,
+		baseBuilder: newBaseBuilder(),
+		table:       table,
 	}
 }
 
-func (b *InsertBuilder) Values(row map[string]interface{}) *InsertBuilder {
-	if len(row) > 0 {
-		b.rows = append(b.rows, row)
+func (b *InsertBuilder) Values(values map[string]interface{}) *InsertBuilder {
+	b.values = append(b.values, values)
+	return b
+}
+
+func (b *InsertBuilder) Returning(columns ...string) *InsertBuilder {
+	b.returning = append(b.returning, columns...)
+	return b
+}
+
+func (b *InsertBuilder) OnConflict(target ...string) *OnConflictBuilder {
+	targetCol := ""
+	if len(target) > 0 {
+		targetCol = target[0]
 	}
-	return b
+	return &OnConflictBuilder{
+		insertBuilder: b,
+		target:        targetCol,
+	}
 }
 
-func (b *InsertBuilder) Returning(cols ...string) *InsertBuilder {
-	var quoted []string
-	for _, c := range cols {
-		q, err := b.quoteIdentifier(c)
-		if err != nil {
-			return b
-		}
-		quoted = append(quoted, q)
+func (b *InsertBuilder) OnConflictDoNothing(target ...string) *InsertBuilder {
+	targetCol := ""
+	if len(target) > 0 {
+		targetCol = target[0]
 	}
 
-	b.Suffix("RETURNING " + strings.Join(quoted, ","))
-	return b
-}
-
-func (b *InsertBuilder) OnConflict(cols ...string) *InsertBuilder {
-	b.conflictColumns = append(b.conflictColumns, cols...)
-	return b
-}
-
-func (b *InsertBuilder) DoNothing() *InsertBuilder {
-	b.doNothing = true
-	return b
-}
-
-func (b *InsertBuilder) DoUpdate(values map[string]interface{}) *InsertBuilder {
-	if b.updateValues == nil {
-		b.updateValues = map[string]interface{}{}
+	b.onConflict = &onConflictClause{
+		target:    targetCol,
+		doNothing: true,
 	}
-	for k, v := range values {
-		b.updateValues[k] = v
-	}
+
 	return b
 }
 
-// COMMON
-func (b *InsertBuilder) Suffix(sql string, args ...interface{}) *InsertBuilder {
-	b.commonBuilder.Suffix(sql, args...)
+func (b *InsertBuilder) OnConflictDoUpdate(target string, updateColumns ...string) *InsertBuilder {
+	b.onConflict = &onConflictClause{
+		target:    target,
+		doNothing: false,
+		doUpdates: updateColumns,
+	}
 
 	return b
 }
 
 func (b *InsertBuilder) Prefix(sql string, args ...interface{}) *InsertBuilder {
-	b.commonBuilder.Prefix(sql, args...)
+	b.baseBuilder.Prefix(sql, args...)
+	return b
+}
 
+func (b *InsertBuilder) Suffix(sql string, args ...interface{}) *InsertBuilder {
+	b.baseBuilder.Suffix(sql, args...)
+	return b
+}
+
+func (b *InsertBuilder) PlaceholderFormat(f PlaceholderFormat) *InsertBuilder {
+	b.baseBuilder.PlaceholderFormat(f)
+	return b
+}
+
+func (b *InsertBuilder) QuoteWith(q QuoteStyle) *InsertBuilder {
+	b.baseBuilder.QuoteWith(q)
+	return b
+}
+
+func (b *InsertBuilder) Comment(text string) *InsertBuilder {
+	b.baseBuilder.Comment(text)
+	return b
+}
+
+func (b *InsertBuilder) CommentKV(kv ...interface{}) *InsertBuilder {
+	b.baseBuilder.CommentKV(kv...)
+	return b
+}
+
+func (b *InsertBuilder) Name(name string) *InsertBuilder {
+	b.baseBuilder.Name(name)
+	return b
+}
+
+func (b *InsertBuilder) Namef(format string, args ...interface{}) *InsertBuilder {
+	b.baseBuilder.Namef(format, args...)
+	return b
+}
+
+func (b *InsertBuilder) AddMeta(key string, value interface{}) *InsertBuilder {
+	b.baseBuilder.AddMeta(key, value)
+	return b
+}
+
+func (b *InsertBuilder) WithMeta(m map[string]string) *InsertBuilder {
+	b.baseBuilder.WithMeta(m)
 	return b
 }
 
 func (b *InsertBuilder) ToSql() (string, []interface{}, error) {
-	var sql strings.Builder
-
-	// comments
-	b.renderComments(&sql)
-	var args []interface{}
-	index := 1
-	b.renderPrefixes(&sql, &args)
-
-	if len(b.rows) == 0 {
-		return "", []interface{}{}, errors.New("eloq: insert values are empty")
+	if b.table == "" {
+		return "", nil, ErrNoTable
 	}
 
-	// build columns from first row
-	var columns []string
-	for k := range b.rows[0] {
-		columns = append(columns, k)
+	if len(b.values) == 0 {
+		return "", nil, ErrNoValues
+	}
+
+	columnSet := make(map[string]bool)
+	for _, row := range b.values {
+		for col := range row {
+			columnSet[col] = true
+		}
+	}
+
+	if len(columnSet) == 0 {
+		return "", nil, ErrEmptyValues
+	}
+
+	columns := make([]string, 0, len(columnSet))
+	for col := range columnSet {
+		columns = append(columns, col)
 	}
 	sort.Strings(columns)
 
-	// validate rows
-	for i, row := range b.rows {
-		if len(row) != len(columns) {
-			return "", []interface{}{}, fmt.Errorf("eloq: inconsistent insert row %d", i+1)
-		}
+	var sql strings.Builder
+	var args []interface{}
 
-		for _, col := range columns {
-			if _, ok := row[col]; !ok {
-				return "", []interface{}{}, fmt.Errorf("eloq: missing column %q in insert row %d", col, i+1)
-			}
-		}
-	}
+	b.renderComments(&sql)
+	phIndex := b.renderPrefixes(&sql, &args, 1)
 
-	// INSERT INTO
+	// INSERT INTO table (columns...)
 	sql.WriteString("INSERT INTO ")
-
 	tbl, err := b.quoteIdentifier(b.table)
 	if err != nil {
-		return "", []interface{}{}, err
+		return "", nil, err
 	}
 	sql.WriteString(tbl)
-
-	// columns
 	sql.WriteString(" (")
 
-	var quotedCols []string
-	for _, c := range columns {
-		q, err := b.quoteIdentifier(c)
-		if err != nil {
-			return "", []interface{}{}, err
+	for i, col := range columns {
+		if i > 0 {
+			sql.WriteString(", ")
 		}
-		quotedCols = append(quotedCols, q)
+		q, err := b.quoteIdentifier(col)
+		if err != nil {
+			return "", nil, err
+		}
+		sql.WriteString(q)
 	}
-
-	sql.WriteString(strings.Join(quotedCols, ","))
 	sql.WriteString(") VALUES ")
 
-	// values
-	var rowSQL []string
-
-	for _, row := range b.rows {
-		var ph []string
-		for _, col := range columns {
-			ph = append(ph, b.formatPlaceholder(index))
-			args = append(args, row[col])
-			index++
+	// VALUES (...)
+	for rowIdx, row := range b.values {
+		if rowIdx > 0 {
+			sql.WriteString(", ")
 		}
-		rowSQL = append(rowSQL, "("+strings.Join(ph, ",")+")")
+		sql.WriteString("(")
+		for i, col := range columns {
+			if i > 0 {
+				sql.WriteString(", ")
+			}
+			val, ok := row[col]
+			if !ok {
+				sql.WriteString("DEFAULT")
+			} else {
+				sql.WriteString(b.formatPlaceholder(phIndex))
+				args = append(args, val)
+				phIndex++
+			}
+		}
+		sql.WriteString(")")
 	}
 
-	sql.WriteString(strings.Join(rowSQL, ", "))
-
 	// ON CONFLICT
-	if len(b.conflictColumns) > 0 {
-		sql.WriteString(" ON CONFLICT (")
-
-		var cols []string
-		for _, c := range b.conflictColumns {
-			q, err := b.quoteIdentifier(c)
+	if b.onConflict != nil {
+		sql.WriteString(" ON CONFLICT")
+		if b.onConflict.target != "" {
+			sql.WriteString(" (")
+			q, err := b.quoteIdentifier(b.onConflict.target)
 			if err != nil {
-				return "", []interface{}{}, err
+				return "", nil, err
 			}
-			cols = append(cols, q)
+			sql.WriteString(q)
+			sql.WriteString(")")
 		}
-
-		sql.WriteString(strings.Join(cols, ","))
-		sql.WriteString(") ")
-
-		if b.doNothing {
-			sql.WriteString("DO NOTHING")
-		} else {
-			if len(b.updateValues) == 0 {
-				return "", []interface{}{}, errors.New("eloq: ON CONFLICT requires DoNothing or DoUpdate")
-			}
-
-			sql.WriteString("DO UPDATE SET ")
-
-			var sets []string
-			updateCols := make([]string, 0, len(b.updateValues))
-			for col := range b.updateValues {
+		if b.onConflict.doNothing {
+			sql.WriteString(" DO NOTHING")
+		} else if len(b.onConflict.doUpdateKV) > 0 {
+			// Handle map-based updates with values
+			updateCols := make([]string, 0, len(b.onConflict.doUpdateKV))
+			for col := range b.onConflict.doUpdateKV {
 				updateCols = append(updateCols, col)
 			}
 			sort.Strings(updateCols)
 
-			for _, col := range updateCols {
-				val := b.updateValues[col]
+			sql.WriteString(" DO UPDATE SET ")
+			for i, col := range updateCols {
+				if i > 0 {
+					sql.WriteString(", ")
+				}
 				q, err := b.quoteIdentifier(col)
 				if err != nil {
-					return "", []interface{}{}, err
+					return "", nil, err
 				}
-
-				sets = append(sets, q+" = "+b.formatPlaceholder(index))
-				args = append(args, val)
-				index++
+				sql.WriteString(q)
+				sql.WriteString(" = ")
+				sql.WriteString(b.formatPlaceholder(phIndex))
+				args = append(args, b.onConflict.doUpdateKV[col])
+				phIndex++
 			}
-
-			sql.WriteString(strings.Join(sets, ", "))
+		} else if len(b.onConflict.doUpdates) > 0 {
+			sql.WriteString(" DO UPDATE SET ")
+			for i, col := range b.onConflict.doUpdates {
+				if i > 0 {
+					sql.WriteString(", ")
+				}
+				q, err := b.quoteIdentifier(col)
+				if err != nil {
+					return "", nil, err
+				}
+				sql.WriteString(q)
+				sql.WriteString(" = EXCLUDED.")
+				sql.WriteString(q)
+			}
 		}
 	}
 
-	b.renderSuffixes(&sql, &args)
+	// RETURNING
+	if len(b.returning) > 0 {
+		sql.WriteString(" RETURNING ")
+		for i, col := range b.returning {
+			if i > 0 {
+				sql.WriteString(", ")
+			}
+			if col == "*" {
+				sql.WriteString(col)
+			} else {
+				q, err := b.quoteIdentifier(col)
+				if err != nil {
+					return "", nil, err
+				}
+				sql.WriteString(q)
+			}
+		}
+	}
+
+	b.renderSuffixes(&sql, &args, phIndex)
 
 	return sql.String(), args, nil
 }

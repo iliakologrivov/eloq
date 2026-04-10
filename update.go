@@ -7,7 +7,7 @@ import (
 )
 
 type UpdateBuilder struct {
-	*commonBuilder
+	baseBuilder
 
 	table  string
 	values map[string]any
@@ -17,66 +17,52 @@ type UpdateBuilder struct {
 
 func Update(table string) *UpdateBuilder {
 	b := &UpdateBuilder{
-		commonBuilder: &commonBuilder{
-			placeholder: Question,
-			quoteStyle:  Backtick,
-			comments:    []string{},
-			queryName:   "",
-			meta:        map[string]string{},
-		},
-		table:  table,
-		values: map[string]interface{}{},
+		baseBuilder: newBaseBuilder(),
+		table:       table,
+		values:      map[string]interface{}{},
 	}
 
 	return b
-}
-
-func (cb *commonBuilder) Update(table string) *UpdateBuilder {
-	return &UpdateBuilder{
-		commonBuilder: cb.clone(),
-		table:         table,
-		values:        map[string]interface{}{},
-	}
 }
 
 // WHERE
 func (b *UpdateBuilder) Where(column string, args ...interface{}) *UpdateBuilder {
-	b.wheres = b.commonBuilder.addWhere(b.wheres, false, column, args...)
+	b.wheres = b.addWhere(b.wheres, false, column, args...)
 	return b
 }
 
 func (b *UpdateBuilder) OrWhere(column string, args ...interface{}) *UpdateBuilder {
-	b.wheres = b.commonBuilder.addWhere(b.wheres, true, column, args...)
+	b.wheres = b.addWhere(b.wheres, true, column, args...)
 	return b
 }
 
 func (b *UpdateBuilder) WhereIn(column string, values ...interface{}) *UpdateBuilder {
-	b.wheres = b.commonBuilder.addWhereIn(b.wheres, column, values, false)
+	b.wheres = b.addWhereIn(b.wheres, column, values, false)
 	return b
 }
 
 func (b *UpdateBuilder) WhereNotIn(column string, values ...interface{}) *UpdateBuilder {
-	b.wheres = b.commonBuilder.addWhereIn(b.wheres, column, values, true)
+	b.wheres = b.addWhereIn(b.wheres, column, values, true)
 	return b
 }
 
 func (b *UpdateBuilder) WhereNull(column string) *UpdateBuilder {
-	b.wheres = b.commonBuilder.addWhereNull(b.wheres, column, false)
+	b.wheres = b.addWhereNull(b.wheres, column, false)
 	return b
 }
 
 func (b *UpdateBuilder) WhereNotNull(column string) *UpdateBuilder {
-	b.wheres = b.commonBuilder.addWhereNull(b.wheres, column, true)
+	b.wheres = b.addWhereNull(b.wheres, column, true)
 	return b
 }
 
 func (b *UpdateBuilder) WhereBetween(column string, from, to interface{}) *UpdateBuilder {
-	b.wheres = b.commonBuilder.addWhereBetween(b.wheres, column, from, to, false)
+	b.wheres = b.addWhereBetween(b.wheres, column, from, to, false)
 	return b
 }
 
 func (b *UpdateBuilder) WhereNotBetween(column string, from, to interface{}) *UpdateBuilder {
-	b.wheres = b.commonBuilder.addWhereBetween(b.wheres, column, from, to, true)
+	b.wheres = b.addWhereBetween(b.wheres, column, from, to, true)
 	return b
 }
 
@@ -94,7 +80,10 @@ func (b *UpdateBuilder) When(condition bool, thenFunc func(*UpdateBuilder) *Upda
 
 func (b *UpdateBuilder) addWhereNested(fn func(*UpdateBuilder) *UpdateBuilder, isOr bool) *UpdateBuilder {
 	nestedBuilder := &UpdateBuilder{
-		commonBuilder: b.commonBuilder.clone(),
+		baseBuilder: baseBuilder{
+			Config:     b.Config,
+			queryState: newQueryState(),
+		},
 	}
 
 	fn(nestedBuilder)
@@ -134,12 +123,66 @@ func (b *UpdateBuilder) SetMap(values map[string]interface{}) *UpdateBuilder {
 	return b
 }
 
+func (b *UpdateBuilder) Prefix(sql string, args ...interface{}) *UpdateBuilder {
+	b.baseBuilder.Prefix(sql, args...)
+	return b
+}
+
+func (b *UpdateBuilder) Suffix(sql string, args ...interface{}) *UpdateBuilder {
+	b.baseBuilder.Suffix(sql, args...)
+	return b
+}
+
+func (b *UpdateBuilder) PlaceholderFormat(f PlaceholderFormat) *UpdateBuilder {
+	b.baseBuilder.PlaceholderFormat(f)
+	return b
+}
+
+func (b *UpdateBuilder) QuoteWith(q QuoteStyle) *UpdateBuilder {
+	b.baseBuilder.QuoteWith(q)
+	return b
+}
+
+func (b *UpdateBuilder) Comment(text string) *UpdateBuilder {
+	b.baseBuilder.Comment(text)
+	return b
+}
+
+func (b *UpdateBuilder) CommentKV(kv ...interface{}) *UpdateBuilder {
+	b.baseBuilder.CommentKV(kv...)
+	return b
+}
+
+func (b *UpdateBuilder) Name(name string) *UpdateBuilder {
+	b.baseBuilder.Name(name)
+	return b
+}
+
+func (b *UpdateBuilder) Namef(format string, args ...interface{}) *UpdateBuilder {
+	b.baseBuilder.Namef(format, args...)
+	return b
+}
+
+func (b *UpdateBuilder) AddMeta(key string, value interface{}) *UpdateBuilder {
+	b.baseBuilder.AddMeta(key, value)
+	return b
+}
+
+func (b *UpdateBuilder) WithMeta(m map[string]string) *UpdateBuilder {
+	b.baseBuilder.WithMeta(m)
+	return b
+}
+
 func (b *UpdateBuilder) ToSql() (string, []interface{}, error) {
 	var sql strings.Builder
 	var args []interface{}
 
+	if b.requireWhere && len(b.wheres) == 0 {
+		return "", nil, ErrRequireWhere
+	}
+
 	b.renderComments(&sql)
-	b.renderPrefixes(&sql, &args)
+	phIndex := b.renderPrefixes(&sql, &args, 1)
 
 	if len(b.values) == 0 {
 		return "", nil, errors.New("eloq: update has no values")
@@ -160,8 +203,6 @@ func (b *UpdateBuilder) ToSql() (string, []interface{}, error) {
 		cols = append(cols, k)
 	}
 	sort.Strings(cols)
-
-	phIndex := 1
 
 	var sets []string
 	for _, col := range cols {
@@ -214,7 +255,7 @@ func (b *UpdateBuilder) ToSql() (string, []interface{}, error) {
 		}
 	}
 
-	b.renderSuffixes(&sql, &args)
+	b.renderSuffixes(&sql, &args, phIndex)
 
 	return sql.String(), args, nil
 }

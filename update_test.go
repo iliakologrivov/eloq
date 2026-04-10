@@ -54,3 +54,43 @@ func TestUpdateEmpty(t *testing.T) {
 
 	assert.Error(t, err)
 }
+
+func TestUpdateRequireWhere(t *testing.T) {
+	builder := NewStatementBuilder().
+		PlaceholderFormat(Dollar).
+		QuoteWith(DoubleQuote).
+		RequireWhere(true)
+
+	sql, args, err := builder.Update("users").Set("name", "John").ToSql()
+
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrRequireWhere)
+	assert.Empty(t, sql)
+	assert.Nil(t, args)
+}
+
+func TestUpdateRequireWhere_WithWhere(t *testing.T) {
+	builder := NewStatementBuilder().
+		PlaceholderFormat(Dollar).
+		QuoteWith(DoubleQuote).
+		RequireWhere(true)
+
+	sql, args, err := builder.Update("users").Set("name", "John").Where("id", 1).ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, `UPDATE "users" SET "name" = $1 WHERE "id" = $2`, sql)
+	assert.Equal(t, []interface{}{"John", 1}, args)
+}
+
+func TestUpdateRequireWhere_WithExplicitAll(t *testing.T) {
+	builder := NewStatementBuilder().
+		PlaceholderFormat(Dollar).
+		QuoteWith(DoubleQuote).
+		RequireWhere(true)
+
+	sql, args, err := builder.Update("users").Set("status", "inactive").Where("1", "=", Raw("1")).ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, `UPDATE "users" SET "status" = $1 WHERE "1" = 1`, sql)
+	assert.Equal(t, []interface{}{"inactive"}, args)
+}

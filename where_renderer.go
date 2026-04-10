@@ -23,7 +23,7 @@ func shiftDollarPlaceholders(sql string, offset int) string {
 	})
 }
 
-func (b *commonBuilder) renderSubqueryValue(
+func (b *baseBuilder) renderSubqueryValue(
 	value interface{},
 	startIndex int,
 ) (string, []interface{}, int, bool, error) {
@@ -45,7 +45,7 @@ func (b *commonBuilder) renderSubqueryValue(
 }
 
 // entry point
-func (b *commonBuilder) renderWheres(
+func (b *baseBuilder) renderWheres(
 	wheres []whereClause,
 	startIndex int,
 ) (string, []interface{}, int, error) {
@@ -84,7 +84,7 @@ func (b *commonBuilder) renderWheres(
 	return strings.Join(parts, " "), allBindings, index, nil
 }
 
-func (b *commonBuilder) renderWhere(
+func (b *baseBuilder) renderWhere(
 	w whereClause,
 	startIndex int,
 ) (string, []interface{}, int, error) {

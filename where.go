@@ -39,7 +39,7 @@ func normalizeWhereValue(value interface{}) interface{} {
 	}
 }
 
-func (b *commonBuilder) addWhere(wheres []whereClause, isOr bool, column string, args ...interface{}) []whereClause {
+func (b *baseBuilder) addWhere(wheres []whereClause, isOr bool, column string, args ...interface{}) []whereClause {
 	if len(args) == 0 {
 		return wheres
 	}
@@ -89,7 +89,7 @@ func (b *commonBuilder) addWhere(wheres []whereClause, isOr bool, column string,
 	})
 }
 
-func (b *commonBuilder) addWhereIn(wheres []whereClause, column string, values []interface{}, isNot bool) []whereClause {
+func (b *baseBuilder) addWhereIn(wheres []whereClause, column string, values []interface{}, isNot bool) []whereClause {
 	return append(wheres, whereClause{
 		column:   column,
 		operator: "IN",
@@ -98,7 +98,7 @@ func (b *commonBuilder) addWhereIn(wheres []whereClause, column string, values [
 	})
 }
 
-func (b *commonBuilder) addWhereNull(wheres []whereClause, column string, isNot bool) []whereClause {
+func (b *baseBuilder) addWhereNull(wheres []whereClause, column string, isNot bool) []whereClause {
 	return append(wheres, whereClause{
 		column: column,
 		isNot:  isNot,
@@ -106,7 +106,7 @@ func (b *commonBuilder) addWhereNull(wheres []whereClause, column string, isNot 
 	})
 }
 
-func (b *commonBuilder) addWhereBetween(wheres []whereClause, column string, from, to interface{}, isNot bool) []whereClause {
+func (b *baseBuilder) addWhereBetween(wheres []whereClause, column string, from, to interface{}, isNot bool) []whereClause {
 	wheres = append(wheres, whereClause{
 		column:   column,
 		operator: "BETWEEN",

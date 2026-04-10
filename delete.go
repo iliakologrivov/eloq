@@ -3,7 +3,7 @@ package eloq
 import "strings"
 
 type DeleteBuilder struct {
-	*commonBuilder
+	baseBuilder
 
 	table  string
 	wheres []whereClause
@@ -13,62 +13,49 @@ type DeleteBuilder struct {
 
 func Delete(table string) *DeleteBuilder {
 	return &DeleteBuilder{
-		commonBuilder: &commonBuilder{
-			placeholder: Question,
-			quoteStyle:  Backtick,
-			comments:    []string{},
-			queryName:   "",
-			meta:        map[string]string{},
-		},
-		table: table,
-	}
-}
-
-func (b *commonBuilder) Delete(table string) *DeleteBuilder {
-	return &DeleteBuilder{
-		commonBuilder: b.clone(),
-		table:         table,
+		baseBuilder: newBaseBuilder(),
+		table:       table,
 	}
 }
 
 // WHERE
 func (b *DeleteBuilder) Where(column string, args ...interface{}) *DeleteBuilder {
-	b.wheres = b.commonBuilder.addWhere(b.wheres, false, column, args...)
+	b.wheres = b.addWhere(b.wheres, false, column, args...)
 	return b
 }
 
 func (b *DeleteBuilder) OrWhere(column string, args ...interface{}) *DeleteBuilder {
-	b.wheres = b.commonBuilder.addWhere(b.wheres, true, column, args...)
+	b.wheres = b.addWhere(b.wheres, true, column, args...)
 	return b
 }
 
 func (b *DeleteBuilder) WhereIn(column string, values ...interface{}) *DeleteBuilder {
-	b.wheres = b.commonBuilder.addWhereIn(b.wheres, column, values, false)
+	b.wheres = b.addWhereIn(b.wheres, column, values, false)
 	return b
 }
 
 func (b *DeleteBuilder) WhereNotIn(column string, values ...interface{}) *DeleteBuilder {
-	b.wheres = b.commonBuilder.addWhereIn(b.wheres, column, values, true)
+	b.wheres = b.addWhereIn(b.wheres, column, values, true)
 	return b
 }
 
 func (b *DeleteBuilder) WhereNull(column string) *DeleteBuilder {
-	b.wheres = b.commonBuilder.addWhereNull(b.wheres, column, false)
+	b.wheres = b.addWhereNull(b.wheres, column, false)
 	return b
 }
 
 func (b *DeleteBuilder) WhereNotNull(column string) *DeleteBuilder {
-	b.wheres = b.commonBuilder.addWhereNull(b.wheres, column, true)
+	b.wheres = b.addWhereNull(b.wheres, column, true)
 	return b
 }
 
 func (b *DeleteBuilder) WhereBetween(column string, from, to interface{}) *DeleteBuilder {
-	b.wheres = b.commonBuilder.addWhereBetween(b.wheres, column, from, to, false)
+	b.wheres = b.addWhereBetween(b.wheres, column, from, to, false)
 	return b
 }
 
 func (b *DeleteBuilder) WhereNotBetween(column string, from, to interface{}) *DeleteBuilder {
-	b.wheres = b.commonBuilder.addWhereBetween(b.wheres, column, from, to, true)
+	b.wheres = b.addWhereBetween(b.wheres, column, from, to, true)
 	return b
 }
 
@@ -86,7 +73,10 @@ func (b *DeleteBuilder) When(condition bool, thenFunc func(*DeleteBuilder) *Dele
 
 func (b *DeleteBuilder) addWhereNested(fn func(*DeleteBuilder) *DeleteBuilder, isOr bool) *DeleteBuilder {
 	nestedBuilder := &DeleteBuilder{
-		commonBuilder: b.commonBuilder.clone(),
+		baseBuilder: baseBuilder{
+			Config:     b.Config,
+			queryState: newQueryState(),
+		},
 	}
 
 	fn(nestedBuilder)
@@ -115,14 +105,12 @@ func (b *DeleteBuilder) OrWhereNested(fn func(*DeleteBuilder) *DeleteBuilder) *D
 
 // Suffix\Prefix
 func (b *DeleteBuilder) Suffix(sql string, args ...interface{}) *DeleteBuilder {
-	b.commonBuilder.Suffix(sql, args...)
-
+	b.baseBuilder.Suffix(sql, args...)
 	return b
 }
 
 func (b *DeleteBuilder) Prefix(sql string, args ...interface{}) *DeleteBuilder {
-	b.commonBuilder.Prefix(sql, args...)
-
+	b.baseBuilder.Prefix(sql, args...)
 	return b
 }
 
@@ -219,12 +207,42 @@ func (b *DeleteBuilder) renderUsing(sql *strings.Builder) error {
 
 // COMMON
 func (b *DeleteBuilder) PlaceholderFormat(f PlaceholderFormat) *DeleteBuilder {
-	b.commonBuilder.PlaceholderFormat(f)
+	b.baseBuilder.PlaceholderFormat(f)
 	return b
 }
 
 func (b *DeleteBuilder) QuoteWith(q QuoteStyle) *DeleteBuilder {
-	b.commonBuilder.QuoteWith(q)
+	b.baseBuilder.QuoteWith(q)
+	return b
+}
+
+func (b *DeleteBuilder) Comment(text string) *DeleteBuilder {
+	b.baseBuilder.Comment(text)
+	return b
+}
+
+func (b *DeleteBuilder) CommentKV(kv ...interface{}) *DeleteBuilder {
+	b.baseBuilder.CommentKV(kv...)
+	return b
+}
+
+func (b *DeleteBuilder) Name(name string) *DeleteBuilder {
+	b.baseBuilder.Name(name)
+	return b
+}
+
+func (b *DeleteBuilder) Namef(format string, args ...interface{}) *DeleteBuilder {
+	b.baseBuilder.Namef(format, args...)
+	return b
+}
+
+func (b *DeleteBuilder) AddMeta(key string, value interface{}) *DeleteBuilder {
+	b.baseBuilder.AddMeta(key, value)
+	return b
+}
+
+func (b *DeleteBuilder) WithMeta(m map[string]string) *DeleteBuilder {
+	b.baseBuilder.WithMeta(m)
 	return b
 }
 
@@ -232,11 +250,15 @@ func (b *DeleteBuilder) ToSql() (string, []interface{}, error) {
 	var sql strings.Builder
 	args := []interface{}{}
 
+	if b.requireWhere && len(b.wheres) == 0 {
+		return "", nil, ErrRequireWhere
+	}
+
 	// comments
 	b.renderComments(&sql)
 
 	// prefixes (EXPLAIN, etc)
-	b.renderPrefixes(&sql, &args)
+	phIndex := b.renderPrefixes(&sql, &args, 1)
 
 	sql.WriteString("DELETE FROM ")
 
@@ -251,10 +273,8 @@ func (b *DeleteBuilder) ToSql() (string, []interface{}, error) {
 		return "", nil, err
 	}
 
-	phIndex := 1
-
 	// JOIN
-	joinSql, joinBindings, nextIndex, joinErr := b.commonBuilder.renderJoins(b.joins, phIndex)
+	joinSql, joinBindings, nextIndex, joinErr := b.renderJoins(b.joins, phIndex)
 	if joinErr != nil {
 		return "", []interface{}{}, joinErr
 	} else if joinSql != "" {
@@ -268,7 +288,7 @@ func (b *DeleteBuilder) ToSql() (string, []interface{}, error) {
 		sql.WriteString(" WHERE ")
 
 		var err error
-		whereSQL, whereBindings, nextIndex, err := b.commonBuilder.renderWheres(b.wheres, phIndex)
+		whereSQL, whereBindings, nextIndex, err := b.renderWheres(b.wheres, phIndex)
 		if err != nil {
 			return "", []interface{}{}, err
 		}
@@ -282,7 +302,7 @@ func (b *DeleteBuilder) ToSql() (string, []interface{}, error) {
 	}
 
 	// suffixes (RETURNING later, FOR UPDATE, etc)
-	b.renderSuffixes(&sql, &args)
+	b.renderSuffixes(&sql, &args, phIndex)
 
 	return sql.String(), args, nil
 }

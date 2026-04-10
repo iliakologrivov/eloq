@@ -7,14 +7,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func getPsqlBuilder() *commonBuilder {
-	return NewBuilder().
+func getPsqlBuilder() *StatementBuilder {
+	return NewStatementBuilder().
 		PlaceholderFormat(Dollar).
 		QuoteWith(DoubleQuote)
 }
 
-func getMysqlBuilder() *commonBuilder {
-	return NewBuilder().
+func getMysqlBuilder() *StatementBuilder {
+	return NewStatementBuilder().
 		PlaceholderFormat(Question).
 		QuoteWith(Backtick)
 }
@@ -43,9 +43,9 @@ func TestCommonBasic_MySql(t *testing.T) {
 
 func TestRenderComments(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
+		Select("*").
 		Comment("hello").
 		CommentKV("a", 1).
-		Select("*").
 		From("users").
 		ToSql()
 
@@ -56,9 +56,9 @@ func TestRenderComments(t *testing.T) {
 
 func TestRenderCommentVK(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
+		Select("*").
 		Comment("hello").
 		CommentKV("a", 1, "k").
-		Select("*").
 		From("users").
 		ToSql()
 
@@ -69,8 +69,8 @@ func TestRenderCommentVK(t *testing.T) {
 
 func TestRenderCommentSanitize(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
-		Comment("*/").
 		Select("*").
+		Comment("*/").
 		From("users").
 		ToSql()
 
@@ -81,8 +81,8 @@ func TestRenderCommentSanitize(t *testing.T) {
 
 func TestQueryName(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
-		Name("load_users").
 		Select("*").
+		Name("load_users").
 		From("users").
 		ToSql()
 
@@ -96,8 +96,8 @@ func TestQueryName(t *testing.T) {
 
 func TestEmptyQueryName(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
-		Name("").
 		Select("*").
+		Name("").
 		From("users").
 		ToSql()
 
@@ -111,9 +111,9 @@ func TestEmptyQueryName(t *testing.T) {
 
 func TestMeta(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
+		Select("*").
 		AddMeta("a", 1).
 		AddMeta("b", "x").
-		Select("*").
 		From("users").
 		ToSql()
 
@@ -126,8 +126,8 @@ func TestMeta(t *testing.T) {
 
 func TestNamef(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
-		Namef("user:%d", 42).
 		Select("*").
+		Namef("user:%d", 42).
 		From("users").
 		ToSql()
 
@@ -141,11 +141,11 @@ func TestNamef(t *testing.T) {
 
 func TestWithMeta(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
+		Select("*").
 		WithMeta(map[string]string{
 			"tenant": "eu",
 			"user":   "42",
 		}).
-		Select("*").
 		From("users").
 		ToSql()
 
@@ -162,8 +162,8 @@ func TestWithContext(t *testing.T) {
 	ctx = context.WithValue(ctx, ContextRequestID, "req456")
 
 	sql, args, err := getPsqlBuilder().
-		WithContext(ctx).
 		Select("*").
+		WithContext(ctx).
 		From("users").
 		ToSql()
 
@@ -179,10 +179,10 @@ func TestNameMetaContextTogether(t *testing.T) {
 	ctx = context.WithValue(ctx, ContextTraceID, "abc")
 
 	sql, args, err := getPsqlBuilder().
+		Select("*").
 		WithContext(ctx).
 		Namef("user:%d", 7).
 		AddMeta("tenant", "eu").
-		Select("*").
 		From("users").
 		ToSql()
 
@@ -196,8 +196,8 @@ func TestNameMetaContextTogether(t *testing.T) {
 
 func TestPrefixBasic(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
-		Prefix("EXPLAIN").
 		Select("*").
+		Prefix("EXPLAIN").
 		From("users").
 		ToSql()
 
@@ -220,9 +220,9 @@ func TestSuffixBasic(t *testing.T) {
 
 func TestExplainSelect(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
+		Select("*").
 		Name("explain_users").
 		Prefix("EXPLAIN ANALYZE").
-		Select("*").
 		From("users").
 		Suffix("FOR UPDATE").
 		ToSql()
@@ -234,13 +234,13 @@ func TestExplainSelect(t *testing.T) {
 
 func TestPrefixWithArgs(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
-		Prefix("SET LOCAL statement_timeout = ?", 1000).
 		Select("*").
+		Prefix("SET LOCAL statement_timeout = ?", 1000).
 		From("users").
 		Where("id", "=", 1).
 		ToSql()
 
 	assert.NoError(t, err)
-	assert.Equal(t, `SET LOCAL statement_timeout = ? SELECT * FROM "users" WHERE "id" = $1`, sql)
+	assert.Equal(t, `SET LOCAL statement_timeout = $1 SELECT * FROM "users" WHERE "id" = $2`, sql)
 	assert.Equal(t, []interface{}{1000, 1}, args)
 }

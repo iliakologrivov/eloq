@@ -20,7 +20,7 @@ type joinOnClause struct {
 	isOr     bool
 }
 
-func (b *commonBuilder) renderJoins(
+func (b *baseBuilder) renderJoins(
 	joinClauses []joinClause,
 	startIndex int,
 ) (string, []interface{}, int, error) {

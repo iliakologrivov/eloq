@@ -506,9 +506,9 @@ func TestWhereExists_PlaceholderAndBooleanComposition(t *testing.T) {
 
 func TestWhereExists_DoesNotInheritParentPrefixOrComment(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
+		Select("*").
 		Comment("outer").
 		Prefix("EXPLAIN").
-		Select("*").
 		From("users").
 		WhereExists(func(q *SelectBuilder) {
 			q.From("orders").

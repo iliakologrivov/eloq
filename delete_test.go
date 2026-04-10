@@ -99,8 +99,8 @@ func TestDeleteWhereNotIn(t *testing.T) {
 
 func TestDeleteWithExplain(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
-		Prefix("EXPLAIN").
 		Delete("users").
+		Prefix("EXPLAIN").
 		Where("id", 1).
 		ToSql()
 
@@ -132,5 +132,45 @@ func TestDeleteUsing(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, `DELETE FROM "users" USING "orders" WHERE "orders"."user_id" = "users"."id"`, sql)
+	assert.Empty(t, args)
+}
+
+func TestDeleteRequireWhere(t *testing.T) {
+	builder := NewStatementBuilder().
+		PlaceholderFormat(Dollar).
+		QuoteWith(DoubleQuote).
+		RequireWhere(true)
+
+	sql, args, err := builder.Delete("users").ToSql()
+
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrRequireWhere)
+	assert.Empty(t, sql)
+	assert.Nil(t, args)
+}
+
+func TestDeleteRequireWhere_WithWhere(t *testing.T) {
+	builder := NewStatementBuilder().
+		PlaceholderFormat(Dollar).
+		QuoteWith(DoubleQuote).
+		RequireWhere(true)
+
+	sql, args, err := builder.Delete("users").Where("id", 1).ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, `DELETE FROM "users" WHERE "id" = $1`, sql)
+	assert.Equal(t, []interface{}{1}, args)
+}
+
+func TestDeleteRequireWhere_WithExplicitAll(t *testing.T) {
+	builder := NewStatementBuilder().
+		PlaceholderFormat(Dollar).
+		QuoteWith(DoubleQuote).
+		RequireWhere(true)
+
+	sql, args, err := builder.Delete("users").Where("1", "=", Raw("1")).ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, `DELETE FROM "users" WHERE "1" = 1`, sql)
 	assert.Empty(t, args)
 }

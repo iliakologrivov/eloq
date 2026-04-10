@@ -1,6 +1,7 @@
 package eloq
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -22,7 +23,7 @@ type unionClause struct {
 }
 
 type SelectBuilder struct {
-	*commonBuilder
+	baseBuilder
 	from         string
 	fromSubquery *SelectBuilder
 	fromAlias    string
@@ -43,15 +44,9 @@ var ErrEmptySubqueryAlias = fmt.Errorf("subquery alias is required")
 
 func Select(columns ...string) *SelectBuilder {
 	b := &SelectBuilder{
-		commonBuilder: &commonBuilder{
-			placeholder: Question,
-			quoteStyle:  Backtick,
-			comments:    []string{},
-			queryName:   "",
-			meta:        map[string]string{},
-		},
-		columns:  make([]selectColumn, 0),
-		bindings: make([]interface{}, 0),
+		baseBuilder: newBaseBuilder(),
+		columns:     make([]selectColumn, 0),
+		bindings:    make([]interface{}, 0),
 	}
 	if len(columns) > 0 {
 		b.columns = nil
@@ -62,41 +57,9 @@ func Select(columns ...string) *SelectBuilder {
 
 func SelectRaw(columns ...string) *SelectBuilder {
 	b := &SelectBuilder{
-		commonBuilder: &commonBuilder{
-			placeholder: Question,
-			quoteStyle:  Backtick,
-			comments:    []string{},
-			queryName:   "",
-			meta:        map[string]string{},
-		},
-		columns:  make([]selectColumn, 0),
-		bindings: make([]interface{}, 0),
-	}
-	if len(columns) > 0 {
-		b.columns = nil
-		b.SelectRaw(columns...)
-	}
-	return b
-}
-
-func (cb *commonBuilder) Select(columns ...string) *SelectBuilder {
-	b := &SelectBuilder{
-		commonBuilder: cb.clone(),
-		columns:       make([]selectColumn, 0),
-		bindings:      make([]interface{}, 0),
-	}
-	if len(columns) > 0 {
-		b.columns = nil
-		b.Select(columns...)
-	}
-	return b
-}
-
-func (cb *commonBuilder) SelectRaw(columns ...string) *SelectBuilder {
-	b := &SelectBuilder{
-		commonBuilder: cb.clone(),
-		columns:       make([]selectColumn, 0),
-		bindings:      make([]interface{}, 0),
+		baseBuilder: newBaseBuilder(),
+		columns:     make([]selectColumn, 0),
+		bindings:    make([]interface{}, 0),
 	}
 	if len(columns) > 0 {
 		b.columns = nil
@@ -168,22 +131,22 @@ func (b *SelectBuilder) Table(table string) *SelectBuilder {
 
 // WHERE
 func (b *SelectBuilder) Where(column string, args ...interface{}) *SelectBuilder {
-	b.wheres = b.commonBuilder.addWhere(b.wheres, false, column, args...)
+	b.wheres = b.addWhere(b.wheres, false, column, args...)
 	return b
 }
 
 func (b *SelectBuilder) OrWhere(column string, args ...interface{}) *SelectBuilder {
-	b.wheres = b.commonBuilder.addWhere(b.wheres, true, column, args...)
+	b.wheres = b.addWhere(b.wheres, true, column, args...)
 	return b
 }
 
 func (b *SelectBuilder) WhereIn(column string, values ...interface{}) *SelectBuilder {
-	b.wheres = b.commonBuilder.addWhereIn(b.wheres, column, values, false)
+	b.wheres = b.addWhereIn(b.wheres, column, values, false)
 	return b
 }
 
 func (b *SelectBuilder) WhereNotIn(column string, values ...interface{}) *SelectBuilder {
-	b.wheres = b.commonBuilder.addWhereIn(b.wheres, column, values, true)
+	b.wheres = b.addWhereIn(b.wheres, column, values, true)
 	return b
 }
 
@@ -214,22 +177,22 @@ func (b *SelectBuilder) WhereNotInSub(column string, query *SelectBuilder) *Sele
 }
 
 func (b *SelectBuilder) WhereNull(column string) *SelectBuilder {
-	b.wheres = b.commonBuilder.addWhereNull(b.wheres, column, false)
+	b.wheres = b.addWhereNull(b.wheres, column, false)
 	return b
 }
 
 func (b *SelectBuilder) WhereNotNull(column string) *SelectBuilder {
-	b.wheres = b.commonBuilder.addWhereNull(b.wheres, column, true)
+	b.wheres = b.addWhereNull(b.wheres, column, true)
 	return b
 }
 
 func (b *SelectBuilder) WhereBetween(column string, from, to interface{}) *SelectBuilder {
-	b.wheres = b.commonBuilder.addWhereBetween(b.wheres, column, from, to, false)
+	b.wheres = b.addWhereBetween(b.wheres, column, from, to, false)
 	return b
 }
 
 func (b *SelectBuilder) WhereNotBetween(column string, from, to interface{}) *SelectBuilder {
-	b.wheres = b.commonBuilder.addWhereBetween(b.wheres, column, from, to, true)
+	b.wheres = b.addWhereBetween(b.wheres, column, from, to, true)
 	return b
 }
 
@@ -247,9 +210,9 @@ func (b *SelectBuilder) When(condition bool, thenFunc func(*SelectBuilder) *Sele
 
 func (b *SelectBuilder) addWhereNested(fn func(*SelectBuilder) *SelectBuilder, isOr bool) *SelectBuilder {
 	nestedBuilder := &SelectBuilder{
-		commonBuilder: &commonBuilder{
-			placeholder: b.placeholder,
-			quoteStyle:  b.quoteStyle,
+		baseBuilder: baseBuilder{
+			Config:     b.Config,
+			queryState: newQueryState(),
 		},
 	}
 
@@ -278,13 +241,13 @@ func (b *SelectBuilder) OrWhereNested(fn func(*SelectBuilder) *SelectBuilder) *S
 }
 
 func (b *SelectBuilder) WhereExists(fn func(*SelectBuilder)) *SelectBuilder {
-	sb := (&commonBuilder{
-		placeholder: b.placeholder,
-		quoteStyle:  b.quoteStyle,
-		comments:    []string{},
-		queryName:   "",
-		meta:        map[string]string{},
-	}).SelectRaw("1")
+	sb := &SelectBuilder{
+		baseBuilder: baseBuilder{
+			Config:     b.Config,
+			queryState: newQueryState(),
+		},
+		columns: []selectColumn{{value: "1", raw: true}},
+	}
 	fn(sb)
 
 	b.wheres = append(b.wheres, whereClause{
@@ -299,13 +262,13 @@ func (b *SelectBuilder) WhereExists(fn func(*SelectBuilder)) *SelectBuilder {
 }
 
 func (b *SelectBuilder) OrWhereExists(fn func(*SelectBuilder)) *SelectBuilder {
-	sb := (&commonBuilder{
-		placeholder: b.placeholder,
-		quoteStyle:  b.quoteStyle,
-		comments:    []string{},
-		queryName:   "",
-		meta:        map[string]string{},
-	}).SelectRaw("1")
+	sb := &SelectBuilder{
+		baseBuilder: baseBuilder{
+			Config:     b.Config,
+			queryState: newQueryState(),
+		},
+		columns: []selectColumn{{value: "1", raw: true}},
+	}
 	fn(sb)
 
 	b.wheres = append(b.wheres, whereClause{
@@ -406,14 +369,12 @@ func (b *SelectBuilder) UnionAll(query *SelectBuilder) *SelectBuilder {
 
 // Suffix\Prefix
 func (b *SelectBuilder) Suffix(sql string, args ...interface{}) *SelectBuilder {
-	b.commonBuilder.Suffix(sql, args...)
-
+	b.baseBuilder.Suffix(sql, args...)
 	return b
 }
 
 func (b *SelectBuilder) Prefix(sql string, args ...interface{}) *SelectBuilder {
-	b.commonBuilder.Prefix(sql, args...)
-
+	b.baseBuilder.Prefix(sql, args...)
 	return b
 }
 
@@ -484,12 +445,49 @@ func (b *SelectBuilder) addJoinWith(joinType, table string, fn func(*JoinBuilder
 
 // COMMON
 func (b *SelectBuilder) PlaceholderFormat(f PlaceholderFormat) *SelectBuilder {
-	b.commonBuilder.PlaceholderFormat(f)
+	b.baseBuilder.PlaceholderFormat(f)
 	return b
 }
 
 func (b *SelectBuilder) QuoteWith(q QuoteStyle) *SelectBuilder {
-	b.commonBuilder.QuoteWith(q)
+	b.baseBuilder.QuoteWith(q)
+	return b
+}
+
+func (b *SelectBuilder) Comment(text string) *SelectBuilder {
+	b.baseBuilder.Comment(text)
+	return b
+}
+
+func (b *SelectBuilder) CommentKV(kv ...interface{}) *SelectBuilder {
+	b.baseBuilder.CommentKV(kv...)
+	return b
+}
+
+func (b *SelectBuilder) Name(name string) *SelectBuilder {
+	b.baseBuilder.Name(name)
+	return b
+}
+
+func (b *SelectBuilder) Namef(format string, args ...interface{}) *SelectBuilder {
+	b.baseBuilder.Namef(format, args...)
+	return b
+}
+
+func (b *SelectBuilder) AddMeta(key string, value interface{}) *SelectBuilder {
+	b.baseBuilder.AddMeta(key, value)
+	return b
+}
+
+func (b *SelectBuilder) WithMeta(m map[string]string) *SelectBuilder {
+	b.baseBuilder.WithMeta(m)
+	return b
+}
+
+func (b *SelectBuilder) WithContext(ctx interface{}) *SelectBuilder {
+	if c, ok := ctx.(context.Context); ok {
+		b.baseBuilder.WithContext(c)
+	}
 	return b
 }
 
@@ -503,9 +501,7 @@ func (b *SelectBuilder) ToSql() (string, []interface{}, error) {
 	b.renderComments(&sql)
 
 	b.bindings = []interface{}{}
-	b.renderPrefixes(&sql, &b.bindings)
-
-	phIndex := 1
+	phIndex := b.renderPrefixes(&sql, &b.bindings, 1)
 
 	sql.WriteString("SELECT ")
 	if len(b.columns) == 0 {
@@ -565,7 +561,7 @@ func (b *SelectBuilder) ToSql() (string, []interface{}, error) {
 	}
 
 	// JOINS
-	joinSql, joinBindings, nextIndex, joinErr := b.commonBuilder.renderJoins(b.joins, phIndex)
+	joinSql, joinBindings, nextIndex, joinErr := b.renderJoins(b.joins, phIndex)
 	if joinErr != nil {
 		return "", []interface{}{}, joinErr
 	} else if joinSql != "" {
@@ -657,7 +653,7 @@ func (b *SelectBuilder) ToSql() (string, []interface{}, error) {
 		sql.WriteString(fmt.Sprintf(" OFFSET %d", *b.offset))
 	}
 
-	b.renderSuffixes(&sql, &b.bindings)
+	b.renderSuffixes(&sql, &b.bindings, phIndex)
 
 	return sql.String(), b.bindings, nil
 }
