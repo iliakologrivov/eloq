@@ -192,16 +192,16 @@ func (b *DeleteBuilder) renderUsing(sql *strings.Builder) error {
 
 	sql.WriteString(" USING ")
 
-	var tables []string
-	for _, t := range b.using {
+	for i, t := range b.using {
+		if i > 0 {
+			sql.WriteByte(',')
+		}
 		q, err := b.quoteIdentifier(t)
 		if err != nil {
 			return err
 		}
-		tables = append(tables, q)
+		sql.WriteString(q)
 	}
-
-	sql.WriteString(strings.Join(tables, ","))
 	return nil
 }
 
@@ -274,31 +274,22 @@ func (b *DeleteBuilder) ToSql() (string, []interface{}, error) {
 	}
 
 	// JOIN
-	joinSql, joinBindings, nextIndex, joinErr := b.renderJoins(b.joins, phIndex)
-	if joinErr != nil {
-		return "", []interface{}{}, joinErr
-	} else if joinSql != "" {
-		sql.WriteString(joinSql)
-		args = append(args, joinBindings...)
-		phIndex = nextIndex
+	joinBindings, nextIndex, err := b.renderJoins(&sql, b.joins, phIndex)
+	if err != nil {
+		return "", []interface{}{}, err
 	}
+	args = append(args, joinBindings...)
+	phIndex = nextIndex
 
 	// WHERE
 	if len(b.wheres) > 0 {
 		sql.WriteString(" WHERE ")
-
-		var err error
-		whereSQL, whereBindings, nextIndex, err := b.renderWheres(b.wheres, phIndex)
+		whereBindings, nextIndex, err := b.renderWheres(&sql, b.wheres, phIndex)
 		if err != nil {
 			return "", []interface{}{}, err
 		}
-
-		if whereSQL != "" {
-			sql.WriteString(whereSQL)
-
-			args = append(args, whereBindings...)
-			phIndex = nextIndex
-		}
+		args = append(args, whereBindings...)
+		phIndex = nextIndex
 	}
 
 	// suffixes (RETURNING later, FOR UPDATE, etc)

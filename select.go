@@ -3,6 +3,7 @@ package eloq
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -507,20 +508,20 @@ func (b *SelectBuilder) ToSql() (string, []interface{}, error) {
 	if len(b.columns) == 0 {
 		sql.WriteString("*")
 	} else {
-		var parts []string
-		for _, col := range b.columns {
+		for i, col := range b.columns {
+			if i > 0 {
+				sql.WriteString(", ")
+			}
 			if col.raw {
-				parts = append(parts, col.value)
+				sql.WriteString(col.value)
 				continue
 			}
 			q, err := b.quoteIdentifier(col.value)
 			if err != nil {
 				return "", []interface{}{}, err
 			}
-			parts = append(parts, q)
+			sql.WriteString(q)
 		}
-
-		sql.WriteString(strings.Join(parts, ", "))
 	}
 
 	if b.fromSubquery != nil {
@@ -561,58 +562,49 @@ func (b *SelectBuilder) ToSql() (string, []interface{}, error) {
 	}
 
 	// JOINS
-	joinSql, joinBindings, nextIndex, joinErr := b.renderJoins(b.joins, phIndex)
-	if joinErr != nil {
-		return "", []interface{}{}, joinErr
-	} else if joinSql != "" {
-		sql.WriteString(joinSql)
-		b.bindings = append(b.bindings, joinBindings...)
-		phIndex = nextIndex
+	joinBindings, nextIndex, err := b.renderJoins(&sql, b.joins, phIndex)
+	if err != nil {
+		return "", []interface{}{}, err
 	}
+	b.bindings = append(b.bindings, joinBindings...)
+	phIndex = nextIndex
 
+	// WHERE
 	if len(b.wheres) > 0 {
-		whereSQL, whereBindings, nextIndex, err := b.renderWheres(b.wheres, phIndex)
+		sql.WriteString(" WHERE ")
+		whereBindings, nextIndex, err := b.renderWheres(&sql, b.wheres, phIndex)
 		if err != nil {
 			return "", []interface{}{}, err
-		} else if whereSQL != "" {
-			sql.WriteString(" WHERE ")
-			sql.WriteString(whereSQL)
-
-			b.bindings = append(b.bindings, whereBindings...)
-			phIndex = nextIndex
 		}
+		b.bindings = append(b.bindings, whereBindings...)
+		phIndex = nextIndex
 	}
 
 	// GROUP BY
 	if len(b.groupBys) > 0 {
 		sql.WriteString(" GROUP BY ")
 
-		parts := make([]string, 0, len(b.groupBys))
-		for _, col := range b.groupBys {
+		for i, col := range b.groupBys {
+			if i > 0 {
+				sql.WriteString(", ")
+			}
 			quoted, err := b.quoteIdentifier(col)
 			if err != nil {
 				return "", []interface{}{}, err
 			}
-			parts = append(parts, quoted)
+			sql.WriteString(quoted)
 		}
-
-		sql.WriteString(strings.Join(parts, ", "))
 	}
 
 	// HAVING
 	if len(b.havings) > 0 {
-		havingSQL, havingBindings, next, err := b.renderWheres(b.havings, phIndex)
+		sql.WriteString(" HAVING ")
+		havingBindings, next, err := b.renderWheres(&sql, b.havings, phIndex)
 		if err != nil {
 			return "", []interface{}{}, err
 		}
-
-		if havingSQL != "" {
-			sql.WriteString(" HAVING ")
-			sql.WriteString(havingSQL)
-
-			b.bindings = append(b.bindings, havingBindings...)
-			phIndex = next
-		}
+		b.bindings = append(b.bindings, havingBindings...)
+		phIndex = next
 	}
 
 	if len(b.unions) > 0 {
@@ -631,26 +623,31 @@ func (b *SelectBuilder) ToSql() (string, []interface{}, error) {
 	if len(b.orders) > 0 {
 		sql.WriteString(" ORDER BY ")
 
-		var parts []string
-		for _, ob := range b.orders {
+		for i, ob := range b.orders {
+			if i > 0 {
+				sql.WriteString(", ")
+			}
 			if ob.raw {
-				parts = append(parts, ob.column)
+				sql.WriteString(ob.column)
 				continue
 			}
 			col, err := b.quoteIdentifier(ob.column)
 			if err != nil {
 				return "", []interface{}{}, err
 			}
-			parts = append(parts, col+" "+ob.direction)
+			sql.WriteString(col)
+			sql.WriteByte(' ')
+			sql.WriteString(ob.direction)
 		}
-		sql.WriteString(strings.Join(parts, ", "))
 	}
 
 	if b.limit != nil {
-		sql.WriteString(fmt.Sprintf(" LIMIT %d", *b.limit))
+		sql.WriteString(" LIMIT ")
+		sql.Write(strconv.AppendUint(nil, *b.limit, 10))
 	}
 	if b.offset != nil {
-		sql.WriteString(fmt.Sprintf(" OFFSET %d", *b.offset))
+		sql.WriteString(" OFFSET ")
+		sql.Write(strconv.AppendUint(nil, *b.offset, 10))
 	}
 
 	b.renderSuffixes(&sql, &b.bindings, phIndex)

@@ -204,55 +204,44 @@ func (b *UpdateBuilder) ToSql() (string, []interface{}, error) {
 	}
 	sort.Strings(cols)
 
-	var sets []string
-	for _, col := range cols {
+	for i, col := range cols {
+		if i > 0 {
+			sql.WriteString(", ")
+		}
 		q, err := b.quoteIdentifier(col)
 		if err != nil {
 			return "", nil, err
 		}
+		sql.WriteString(q)
+		sql.WriteString(" = ")
 
 		switch v := b.values[col].(type) {
-
 		case rawSqlRef:
-			sets = append(sets, q+" = "+string(v))
-
+			sql.WriteString(string(v))
 		default:
-			sets = append(sets, q+" = "+b.formatPlaceholder(phIndex))
+			sql.WriteString(b.formatPlaceholder(phIndex))
 			args = append(args, v)
 			phIndex++
 		}
 	}
 
-	sql.WriteString(strings.Join(sets, ", "))
-
 	// JOIN
-	if len(b.joins) > 0 {
-		joinSql, joinBindings, nextIndex, joinErr := b.renderJoins(b.joins, phIndex)
-		if joinErr != nil {
-			return "", []interface{}{}, joinErr
-		} else if joinSql != "" {
-			sql.WriteString(joinSql)
-			args = append(args, joinBindings...)
-			phIndex = nextIndex
-		}
+	joinBindings, nextIndex, err := b.renderJoins(&sql, b.joins, phIndex)
+	if err != nil {
+		return "", []interface{}{}, err
 	}
+	args = append(args, joinBindings...)
+	phIndex = nextIndex
 
 	// WHERE
 	if len(b.wheres) > 0 {
 		sql.WriteString(" WHERE ")
-
-		var err error
-		whereSQL, whereBindings, nextIndex, err := b.renderWheres(b.wheres, phIndex)
+		whereBindings, nextIndex, err := b.renderWheres(&sql, b.wheres, phIndex)
 		if err != nil {
 			return "", []interface{}{}, err
 		}
-
-		if whereSQL != "" {
-			sql.WriteString(whereSQL)
-
-			args = append(args, whereBindings...)
-			phIndex = nextIndex
-		}
+		args = append(args, whereBindings...)
+		phIndex = nextIndex
 	}
 
 	b.renderSuffixes(&sql, &args, phIndex)

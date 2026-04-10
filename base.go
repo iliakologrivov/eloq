@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 )
 
@@ -68,20 +69,41 @@ func (qs *queryState) clone() *queryState {
 }
 
 func (b *baseBuilder) quoteIdentifier(id string) (string, error) {
+	dotIdx := strings.IndexByte(id, '.')
+	if dotIdx == -1 {
+		p := strings.TrimSpace(id)
+		if p == "*" {
+			return p, nil
+		}
+		if !isValidIdentifier(p) {
+			return "", fmt.Errorf("invalid identifier: %s", p)
+		}
+		quote := string(b.quoteStyle)
+		return quote + p + quote, nil
+	}
+
 	quote := string(b.quoteStyle)
 	parts := strings.Split(id, ".")
+	var sb strings.Builder
+	sb.Grow(len(id) + len(parts)*2)
+
 	for i, p := range parts {
 		p = strings.TrimSpace(p)
+		if i > 0 {
+			sb.WriteByte('.')
+		}
 		if p == "*" {
-			parts[i] = p
+			sb.WriteString(p)
 			continue
 		}
 		if !isValidIdentifier(p) {
 			return "", fmt.Errorf("invalid identifier: %s", p)
 		}
-		parts[i] = quote + p + quote
+		sb.WriteString(quote)
+		sb.WriteString(p)
+		sb.WriteString(quote)
 	}
-	return strings.Join(parts, "."), nil
+	return sb.String(), nil
 }
 
 func isValidIdentifier(s string) bool {
@@ -95,7 +117,7 @@ func isValidIdentifier(s string) bool {
 
 func (b *baseBuilder) formatPlaceholder(n int) string {
 	if b.placeholder == Dollar {
-		return fmt.Sprintf("$%d", n)
+		return "$" + strconv.Itoa(n)
 	}
 	return "?"
 }
@@ -224,38 +246,55 @@ func (b *baseBuilder) WithContext(ctx context.Context) {
 }
 
 func (b *baseBuilder) renderComments(sql *strings.Builder) {
-	var parts []string
-
-	if b.queryName != "" {
-		parts = append(parts, "name="+b.queryName)
+	// Быстрая проверка: есть ли что рендерить
+	if b.queryName == "" && len(b.meta) == 0 && len(b.comments) == 0 {
+		return
 	}
 
-	for k, v := range b.meta {
-		parts = append(parts, k+"="+v)
-	}
-
-	if len(b.comments) > 0 {
-		var cs []string
-		for _, c := range b.comments {
-			c = strings.ReplaceAll(c, "/*", "")
-			c = strings.ReplaceAll(c, "*/", "")
-			c = strings.TrimSpace(c)
-
-			if c != "" {
-				cs = append(cs, c)
-			}
-		}
-		if len(cs) > 0 {
-			parts = append(parts, strings.Join(cs, " | "))
+	// Предварительно санитизируем комментарии и проверяем есть ли что выводить
+	var sanitizedComments []string
+	for _, c := range b.comments {
+		c = strings.ReplaceAll(c, "/*", "")
+		c = strings.ReplaceAll(c, "*/", "")
+		c = strings.TrimSpace(c)
+		if c != "" {
+			sanitizedComments = append(sanitizedComments, c)
 		}
 	}
 
-	if len(parts) == 0 {
+	// Проверяем: если всё пустое после санитизации — не выводим комментарий
+	if b.queryName == "" && len(b.meta) == 0 && len(sanitizedComments) == 0 {
 		return
 	}
 
 	sql.WriteString("/* ")
-	sql.WriteString(strings.Join(parts, " "))
+
+	first := true
+
+	if b.queryName != "" {
+		sql.WriteString("name=")
+		sql.WriteString(b.queryName)
+		first = false
+	}
+
+	for k, v := range b.meta {
+		if !first {
+			sql.WriteByte(' ')
+		}
+		sql.WriteString(k)
+		sql.WriteByte('=')
+		sql.WriteString(v)
+		first = false
+	}
+
+	for _, c := range sanitizedComments {
+		if !first {
+			sql.WriteString(" | ")
+		}
+		sql.WriteString(c)
+		first = false
+	}
+
 	sql.WriteString(" */ ")
 }
 
@@ -287,16 +326,19 @@ func (b *baseBuilder) renderPlaceholderInSQL(sql string, startIndex int) string 
 		return sql
 	}
 
-	result := ""
+	var sb strings.Builder
+	sb.Grow(len(sql) + 10)
+
 	for _, ch := range sql {
 		if ch == '?' {
-			result += b.formatPlaceholder(startIndex)
+			sb.WriteByte('$')
+			sb.WriteString(strconv.Itoa(startIndex))
 			startIndex++
 		} else {
-			result += string(ch)
+			sb.WriteRune(ch)
 		}
 	}
-	return result
+	return sb.String()
 }
 
 func (b *baseBuilder) Suffix(sql string, args ...interface{}) {

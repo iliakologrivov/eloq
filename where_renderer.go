@@ -2,205 +2,299 @@ package eloq
 
 import (
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 )
-
-var dollarPlaceholderRe = regexp.MustCompile(`\$(\d+)`)
 
 func shiftDollarPlaceholders(sql string, offset int) string {
 	if offset == 0 {
 		return sql
 	}
 
-	return dollarPlaceholderRe.ReplaceAllStringFunc(sql, func(m string) string {
-		n, err := strconv.Atoi(m[1:])
-		if err != nil {
-			return m
+	var sb strings.Builder
+	sb.Grow(len(sql) + len(sql)/4)
+
+	i := 0
+	for i < len(sql) {
+		if sql[i] == '$' && i+1 < len(sql) && sql[i+1] >= '0' && sql[i+1] <= '9' {
+			j := i + 1
+			for j < len(sql) && sql[j] >= '0' && sql[j] <= '9' {
+				j++
+			}
+			numStr := sql[i+1 : j]
+			if n, err := strconv.Atoi(numStr); err == nil {
+				sb.WriteByte('$')
+				sb.WriteString(strconv.Itoa(n + offset))
+			} else {
+				sb.WriteString(sql[i:j])
+			}
+			i = j
+		} else {
+			sb.WriteByte(sql[i])
+			i++
 		}
-		return fmt.Sprintf("$%d", n+offset)
-	})
+	}
+	return sb.String()
 }
 
+// renderSubqueryValue пишет результат напрямую в builder
 func (b *baseBuilder) renderSubqueryValue(
+	sql *strings.Builder,
 	value interface{},
 	startIndex int,
-) (string, []interface{}, int, bool, error) {
+) ([]interface{}, int, bool, error) {
 	sub, ok := value.(Subquery)
 	if !ok {
-		return "", nil, startIndex, false, nil
+		return nil, startIndex, false, nil
 	}
 
 	subSQL, subArgs, err := sub.builder.ToSql()
 	if err != nil {
-		return "", nil, startIndex, true, err
+		return nil, startIndex, true, err
 	}
 
 	if b.placeholder == Dollar && startIndex > 1 {
 		subSQL = shiftDollarPlaceholders(subSQL, startIndex-1)
 	}
 
-	return subSQL, subArgs, startIndex + len(subArgs), true, nil
+	sql.WriteString(subSQL)
+	return subArgs, startIndex + len(subArgs), true, nil
 }
 
-// entry point
+// renderWheres пишет результат напрямую в builder
+// Возвращает (bindings, nextIndex, error)
 func (b *baseBuilder) renderWheres(
+	sql *strings.Builder,
 	wheres []whereClause,
 	startIndex int,
-) (string, []interface{}, int, error) {
+) ([]interface{}, int, error) {
 	if len(wheres) == 0 {
-		return "", nil, startIndex, nil
+		return nil, startIndex, nil
 	}
 
-	var parts []string
 	var allBindings []interface{}
 	index := startIndex
 
 	for i, w := range wheres {
-		sql, bindings, next, err := b.renderWhere(w, index)
-		if err != nil {
-			return "", nil, startIndex, err
-		}
+		// Для вложенных условий получаем временный builder
+		if w.nested != nil {
+			var nestedSQL strings.Builder
+			bindings, next, err := b.renderWheres(&nestedSQL, w.nested, index)
+			if err != nil {
+				return nil, startIndex, err
+			}
+			index = next
 
-		index = next
+			nestedStr := nestedSQL.String()
+			if nestedStr == "" {
+				continue
+			}
 
-		if sql == "" {
+			if i > 0 {
+				if w.isOr {
+					sql.WriteString(" OR ")
+				} else {
+					sql.WriteString(" AND ")
+				}
+			}
+			sql.WriteByte('(')
+			sql.WriteString(nestedStr)
+			sql.WriteByte(')')
+			allBindings = append(allBindings, bindings...)
 			continue
 		}
 
-		if i > 0 && len(parts) > 0 {
-			if w.isOr {
-				sql = "OR " + sql
-			} else {
-				sql = "AND " + sql
-			}
+		// Обычное условие
+		beforeLen := sql.Len()
+		bindings, next, err := b.renderWhere(sql, w, index)
+		if err != nil {
+			return nil, startIndex, err
+		}
+		index = next
+
+		// Если ничего не добавлено
+		if sql.Len() == beforeLen {
+			continue
 		}
 
-		parts = append(parts, sql)
+		// Добавляем AND/OR перед условием (кроме первого)
+		if i > 0 {
+			prefix := " AND "
+			if w.isOr {
+				prefix = " OR "
+			}
+			// Вставляем prefix в начало
+			result := sql.String()
+			before := result[:beforeLen]
+			after := result[beforeLen:]
+			sql.Reset()
+			sql.WriteString(before)
+			sql.WriteString(prefix)
+			sql.WriteString(after)
+		}
+
 		allBindings = append(allBindings, bindings...)
 	}
 
-	return strings.Join(parts, " "), allBindings, index, nil
+	return allBindings, index, nil
 }
 
+// renderWhere пишет одно условие WHERE напрямую в builder
+// Возвращает (bindings, nextIndex, error)
 func (b *baseBuilder) renderWhere(
+	sql *strings.Builder,
 	w whereClause,
 	startIndex int,
-) (string, []interface{}, int, error) {
-	// Nested
-	if w.nested != nil {
-		sql, bindings, next, err := b.renderWheres(w.nested, startIndex)
-		if err != nil {
-			return "", nil, startIndex, err
-		}
-		if sql == "" {
-			return "", nil, startIndex, nil
-		}
-		return "(" + sql + ")", bindings, next, nil
-	}
-
+) ([]interface{}, int, error) {
 	col, err := b.quoteIdentifier(w.column)
 	if err != nil {
-		return "", []interface{}{}, startIndex, err
+		return nil, startIndex, err
 	}
 
 	// NULL handling
 	if w.value == nil || w.operator == "IS NULL" {
+		sql.WriteString(col)
 		isNot := w.isNot
 
 		switch w.operator {
 		case "=", "IS", "IS NULL", "":
 			if isNot {
-				return fmt.Sprintf("%s IS NOT NULL", col), []interface{}{}, startIndex, nil
+				sql.WriteString(" IS NOT NULL")
+			} else {
+				sql.WriteString(" IS NULL")
 			}
-			return fmt.Sprintf("%s IS NULL", col), []interface{}{}, startIndex, nil
+			return nil, startIndex, nil
 
 		case "!=", "<>", "IS NOT NULL", "IS NOT":
 			if isNot {
-				return fmt.Sprintf("%s IS NULL", col), []interface{}{}, startIndex, nil
+				sql.WriteString(" IS NULL")
+			} else {
+				sql.WriteString(" IS NOT NULL")
 			}
-			return fmt.Sprintf("%s IS NOT NULL", col), []interface{}{}, startIndex, nil
+			return nil, startIndex, nil
 
 		default:
-			return "", []interface{}{}, startIndex, fmt.Errorf("eloq: invalid operator %q for NULL", w.operator)
+			return nil, startIndex, fmt.Errorf("eloq: invalid operator %q for NULL", w.operator)
 		}
 	}
 
 	switch w.operator {
 	case "EXISTS":
-		subSQL, subArgs, nextIndex, ok, err := b.renderSubqueryValue(w.value, startIndex)
-		if err != nil {
-			return "", nil, startIndex, err
-		}
-		if ok {
-			sql := fmt.Sprintf("%s (%s)", w.operator, subSQL)
-			return sql, subArgs, nextIndex, nil
+		sub, ok := w.value.(Subquery)
+		if !ok {
+			return nil, startIndex, fmt.Errorf("eloq: EXISTS operator requires a subquery")
 		}
 
-		return "", []interface{}{}, startIndex, fmt.Errorf("eloq: EXISTS operator requires a subquery")
+		subSQL, subArgs, err := sub.builder.ToSql()
+		if err != nil {
+			return nil, startIndex, err
+		}
+
+		if b.placeholder == Dollar && startIndex > 1 {
+			subSQL = shiftDollarPlaceholders(subSQL, startIndex-1)
+		}
+
+		sql.WriteString(w.operator)
+		sql.WriteString(" (")
+		sql.WriteString(subSQL)
+		sql.WriteByte(')')
+		return subArgs, startIndex + len(subArgs), nil
+
 	case "IN":
 		op := w.operator
 		if w.isNot {
 			op = "NOT " + op
 		}
 
-		subSQL, subArgs, nextIndex, ok, err := b.renderSubqueryValue(w.value, startIndex)
+		// Проверяем subquery
+		var tmpSQL strings.Builder
+		subArgs, nextIndex, ok, err := b.renderSubqueryValue(&tmpSQL, w.value, startIndex)
 		if err != nil {
-			return "", nil, startIndex, err
+			return nil, startIndex, err
 		}
 		if ok {
-			sql := fmt.Sprintf("%s %s (%s)", col, op, subSQL)
-			return sql, subArgs, nextIndex, nil
+			sql.WriteString(col)
+			sql.WriteByte(' ')
+			sql.WriteString(op)
+			sql.WriteString(" (")
+			sql.WriteString(tmpSQL.String())
+			sql.WriteByte(')')
+			return subArgs, nextIndex, nil
 		}
 
 		values, ok := w.value.([]interface{})
 		if !ok || len(values) == 0 {
-			return "", nil, startIndex, fmt.Errorf("eloq: empty IN condition for %q", w.column)
+			return nil, startIndex, fmt.Errorf("eloq: empty IN condition for %q", w.column)
 		}
 
-		var ph []string
+		sql.WriteString(col)
+		sql.WriteByte(' ')
+		sql.WriteString(op)
+		sql.WriteString(" (")
+
 		idx := startIndex
-		for range values {
-			ph = append(ph, b.formatPlaceholder(idx))
+		for i := range values {
+			if i > 0 {
+				sql.WriteString(", ")
+			}
+			sql.WriteString(b.formatPlaceholder(idx))
 			idx++
 		}
-
-		sql := fmt.Sprintf("%s %s (%s)", col, op, strings.Join(ph, ", "))
-		return sql, values, idx, nil
+		sql.WriteByte(')')
+		return values, idx, nil
 
 	case "BETWEEN":
 		values, ok := w.value.([]interface{})
 		if !ok || len(values) != 2 {
-			return "", []interface{}{}, startIndex, fmt.Errorf("eloq: BETWEEN expects 2 values for %q", w.column)
+			return nil, startIndex, fmt.Errorf("eloq: BETWEEN expects 2 values for %q", w.column)
 		}
 
 		ph1 := b.formatPlaceholder(startIndex)
 		ph2 := b.formatPlaceholder(startIndex + 1)
 
+		sql.WriteString(col)
 		if w.isNot {
-			return fmt.Sprintf("%s NOT BETWEEN %s AND %s", col, ph1, ph2), values, startIndex + 2, nil
+			sql.WriteString(" NOT BETWEEN ")
+		} else {
+			sql.WriteString(" BETWEEN ")
 		}
-
-		return fmt.Sprintf("%s BETWEEN %s AND %s", col, ph1, ph2), values, startIndex + 2, nil
+		sql.WriteString(ph1)
+		sql.WriteString(" AND ")
+		sql.WriteString(ph2)
+		return values, startIndex + 2, nil
 
 	default:
-		subSQL, subArgs, nextIndex, ok, err := b.renderSubqueryValue(w.value, startIndex)
+		// Проверяем subquery
+		var tmpSQL strings.Builder
+		subArgs, nextIndex, ok, err := b.renderSubqueryValue(&tmpSQL, w.value, startIndex)
 		if err != nil {
-			return "", nil, startIndex, err
+			return nil, startIndex, err
 		}
 		if ok {
-			sql := fmt.Sprintf("%s %s (%s)", col, w.operator, subSQL)
-			return sql, subArgs, nextIndex, nil
+			sql.WriteString(col)
+			sql.WriteByte(' ')
+			sql.WriteString(w.operator)
+			sql.WriteString(" (")
+			sql.WriteString(tmpSQL.String())
+			sql.WriteByte(')')
+			return subArgs, nextIndex, nil
 		}
 
 		if rawVal, ok := w.value.(rawSqlRef); ok {
-			sql := fmt.Sprintf("%s %s %s", col, w.operator, rawVal)
-			return sql, []interface{}{}, startIndex, nil
+			sql.WriteString(col)
+			sql.WriteByte(' ')
+			sql.WriteString(w.operator)
+			sql.WriteByte(' ')
+			sql.WriteString(string(rawVal))
+			return nil, startIndex, nil
 		}
 
 		ph := b.formatPlaceholder(startIndex)
-		sql := fmt.Sprintf("%s %s %s", col, w.operator, ph)
-		return sql, []interface{}{w.value}, startIndex + 1, nil
+		sql.WriteString(col)
+		sql.WriteByte(' ')
+		sql.WriteString(w.operator)
+		sql.WriteByte(' ')
+		sql.WriteString(ph)
+		return []interface{}{w.value}, startIndex + 1, nil
 	}
 }

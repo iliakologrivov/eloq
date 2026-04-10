@@ -20,31 +20,34 @@ type joinOnClause struct {
 	isOr     bool
 }
 
+// renderJoins пишет результат напрямую в builder
+// Возвращает (bindings, nextIndex, error)
 func (b *baseBuilder) renderJoins(
+	sql *strings.Builder,
 	joinClauses []joinClause,
 	startIndex int,
-) (string, []interface{}, int, error) {
+) ([]interface{}, int, error) {
 	if len(joinClauses) == 0 {
-		return "", []interface{}{}, startIndex, nil
+		return nil, startIndex, nil
 	}
 
-	var sql strings.Builder
-
 	bindings := []interface{}{}
+	firstOn := true
+
 	for _, j := range joinClauses {
 		if j.raw {
-			sql.WriteString(" ")
+			sql.WriteByte(' ')
 			sql.WriteString(j.rawSQL)
 			continue
 		}
 
-		sql.WriteString(" ")
+		sql.WriteByte(' ')
 		sql.WriteString(j.joinType)
 		sql.WriteString(" JOIN ")
 
 		tbl, err := b.quoteIdentifier(j.table)
 		if err != nil {
-			return "", []interface{}{}, startIndex, err
+			return nil, startIndex, err
 		}
 		sql.WriteString(tbl)
 
@@ -53,54 +56,53 @@ func (b *baseBuilder) renderJoins(
 		}
 
 		sql.WriteString(" ON ")
+		firstOn = true
 
-		var parts []string
-
-		// ON conditions (column-to-column)
 		for _, on := range j.ons {
 			left, err := b.quoteIdentifier(on.left)
 			if err != nil {
-				return "", []interface{}{}, startIndex, err
+				return nil, startIndex, err
 			}
 
 			right, err := b.quoteIdentifier(on.right)
 			if err != nil {
-				return "", []interface{}{}, startIndex, err
+				return nil, startIndex, err
 			}
 
-			expr := left + " " + on.operator + " " + right
-
-			if len(parts) > 0 {
+			if !firstOn {
 				if on.isOr {
-					expr = "OR " + expr
+					sql.WriteString(" OR ")
 				} else {
-					expr = "AND " + expr
+					sql.WriteString(" AND ")
 				}
 			}
-
-			parts = append(parts, expr)
+			sql.WriteString(left)
+			sql.WriteByte(' ')
+			sql.WriteString(on.operator)
+			sql.WriteByte(' ')
+			sql.WriteString(right)
+			firstOn = false
 		}
 
 		// WHERE inside JOIN
 		if len(j.wheres) > 0 {
-			whereSQL, whereBindings, next, err := b.renderWheres(j.wheres, startIndex)
+			if !firstOn {
+				sql.WriteString(" AND (")
+			} else {
+				sql.WriteByte('(')
+			}
+
+			whereBindings, next, err := b.renderWheres(sql, j.wheres, startIndex)
 			if err != nil {
-				return "", []interface{}{}, startIndex, err
+				return nil, startIndex, err
 			}
 
-			if whereSQL != "" {
-				if len(parts) > 0 {
-					whereSQL = "AND (" + whereSQL + ")"
-				}
-				parts = append(parts, whereSQL)
+			sql.WriteByte(')')
 
-				bindings = append(bindings, whereBindings...)
-				startIndex = next
-			}
+			bindings = append(bindings, whereBindings...)
+			startIndex = next
 		}
-
-		sql.WriteString(strings.Join(parts, " "))
 	}
 
-	return sql.String(), bindings, startIndex, nil
+	return bindings, startIndex, nil
 }
