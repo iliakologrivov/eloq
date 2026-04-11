@@ -311,6 +311,127 @@ sql, args, _ := eloq.NewBuilder().
 - `Update` без `Set` -> ошибка
 - идентификаторы валидируются (защита от SQL injection через имена таблиц/колонок)
 
+## Statement Caching
+
+Пакет предоставляет кеширование prepared statements для улучшения производительности при многократном выполнении одинаковых SQL-запросов.
+
+### Зачем нужен кеш
+
+При каждом выполнении SQL-запроса база данных:
+1. Парсит SQL
+2. Строит план выполнения
+3. Выполняет запрос
+
+Prepared statement позволяет сделать шаги 1-2 один раз, а потом только выполнять с разными аргументами. Это даёт прирост 10-30% на простых запросах и до 50% на сложных.
+
+### Использование
+
+```go
+package main
+
+import (
+	"context"
+	"database/sql"
+	
+	"github.com/iliakologrivov/eloq"
+	_ "github.com/lib/pq"
+)
+
+func main() {
+	db, _ := sql.Open("postgres", dsn)
+	defer db.Close()
+
+	// Создаём Runner с кешем
+	runner := eloq.NewRunner(db)
+	defer runner.Close()
+
+	ctx := context.Background()
+
+	// Первый вызов - создаёт prepared statement
+	result, _ := runner.Exec(ctx, 
+		"INSERT INTO users (name, email) VALUES (?, ?)",
+		"Alice", "alice@example.com",
+	)
+
+	// Второй вызов - использует кешированный statement (быстрее)
+	result, _ = runner.Exec(ctx,
+		"INSERT INTO users (name, email) VALUES (?, ?)",
+		"Bob", "bob@example.com",
+	)
+}
+```
+
+### С builder'ами
+
+```go
+runner := eloq.NewRunner(db)
+defer runner.Close()
+
+ctx := context.Background()
+
+// SELECT через builder
+sb := eloq.Select("*").From("users").Where("id", 1)
+row, _ := eloq.QueryRowBuilder(ctx, runner, sb)
+
+var name string
+row.Scan(&name)
+
+// INSERT через builder
+ib := eloq.Insert("users").Values(map[string]interface{}{
+	"name": "Alice",
+})
+result, _ := eloq.ExecBuilder(ctx, runner, ib)
+
+// UPDATE через builder
+ub := eloq.Update("users").Set("name", "Bob").Where("id", 1)
+result, _ = eloq.ExecBuilder(ctx, runner, ub)
+
+// DELETE через builder
+dbb := eloq.Delete("users").Where("id", 1)
+result, _ = eloq.ExecBuilder(ctx, runner, dbb)
+```
+
+### StmtCacher
+
+Для низкоуровневого контроля:
+
+```go
+cache := eloq.NewStmtCache(db)
+
+// Получить или создать prepared statement
+stmt, _ := cache.Prepare(ctx, "SELECT * FROM users WHERE id = ?")
+
+// Выполнить
+rows, _ := stmt.Query(1)
+
+// Проверить размер кеша
+size := cache.Size()
+
+// Закрыть все statements
+cache.Close()
+```
+
+### Методы Runner
+
+| Метод | Описание |
+|-------|----------|
+| `Prepare(ctx, sql)` | Возвращает кешированный `*sql.Stmt` |
+| `Exec(ctx, sql, args...)` | Выполняет INSERT/UPDATE/DELETE |
+| `Query(ctx, sql, args...)` | Выполняет SELECT, возвращает `*sql.Rows` |
+| `QueryRow(ctx, sql, args...)` | Выполняет SELECT, возвращает одну строку |
+| `Close()` | Закрывает все кешированные statements |
+| `Size()` | Возвращает количество statements в кеше |
+
+### Потокобезопасность
+
+`StmtCacher` и `Runner` потокобезопасны. Используют `sync.RWMutex` для конкурентного доступа. Можно безопасно использовать из разных горутин.
+
+### Важно
+
+- Вызывайте `Close()` при завершении работы приложения
+- Кеш хранит statements по точному совпадению SQL-строки
+- Для PostgreSQL с `$1, $2...` placeholders кеш работает корректно
+
 ## Тесты
 
 ```bash
