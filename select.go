@@ -111,10 +111,13 @@ func (b *SelectBuilder) AddSelectRaw(expr ...string) *SelectBuilder {
 	return b
 }
 
-func (b *SelectBuilder) From(from string) *SelectBuilder {
+func (b *SelectBuilder) From(from string, alias ...string) *SelectBuilder {
 	b.from = from
 	b.fromSubquery = nil
 	b.fromAlias = ""
+	if len(alias) > 0 && alias[0] != "" {
+		b.fromAlias = alias[0]
+	}
 	return b
 }
 
@@ -125,8 +128,8 @@ func (b *SelectBuilder) FromSub(query *SelectBuilder, alias string) *SelectBuild
 	return b
 }
 
-func (b *SelectBuilder) Table(table string) *SelectBuilder {
-	b.From(table)
+func (b *SelectBuilder) Table(table string, alias ...string) *SelectBuilder {
+	b.From(table, alias...)
 	return b
 }
 
@@ -559,6 +562,15 @@ func (b *SelectBuilder) ToSql() (string, []interface{}, error) {
 		}
 
 		sql.WriteString(table)
+
+		if b.fromAlias != "" {
+			alias, err := b.quoteIdentifier(b.fromAlias)
+			if err != nil {
+				return "", []interface{}{}, err
+			}
+			sql.WriteString(" AS ")
+			sql.WriteString(alias)
+		}
 	}
 
 	// JOINS

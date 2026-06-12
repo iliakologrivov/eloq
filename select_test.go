@@ -96,6 +96,90 @@ func TestSelectAndSelectRaw_Mysql(t *testing.T) {
 	assert.Empty(t, args)
 }
 
+func TestSelectFromAlias_Psql(t *testing.T) {
+	sql, args, err := getPsqlBuilder().
+		Select("t.id").
+		From("table", "t").
+		OrderByDesc("t.id").
+		Limit(1).
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, `SELECT "t"."id" FROM "table" AS "t" ORDER BY "t"."id" DESC LIMIT 1`, sql)
+	assert.Equal(t, []interface{}{}, args)
+}
+
+func TestSelectFromAlias_Mysql(t *testing.T) {
+	sql, args, err := getMysqlBuilder().
+		Select("t.id").
+		From("table", "t").
+		OrderByDesc("t.id").
+		Limit(1).
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, "SELECT `t`.`id` FROM `table` AS `t` ORDER BY `t`.`id` DESC LIMIT 1", sql)
+	assert.Equal(t, []interface{}{}, args)
+}
+
+func TestSelectTableAlias_Psql(t *testing.T) {
+	sql, args, err := getPsqlBuilder().
+		Select("*").
+		Table("users", "u").
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, `SELECT * FROM "users" AS "u"`, sql)
+	assert.Equal(t, []interface{}{}, args)
+}
+
+func TestSelectTableAlias_Mysql(t *testing.T) {
+	sql, args, err := getMysqlBuilder().
+		Select("*").
+		Table("users", "u").
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, "SELECT * FROM `users` AS `u`", sql)
+	assert.Equal(t, []interface{}{}, args)
+}
+
+func TestSelectFromNoAlias_Psql(t *testing.T) {
+	sql, args, err := getPsqlBuilder().
+		Select("*").
+		From("users").
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, `SELECT * FROM "users"`, sql)
+	assert.Equal(t, []interface{}{}, args)
+}
+
+func TestSelectFromEmptyAlias_Psql(t *testing.T) {
+	sql, args, err := getPsqlBuilder().
+		Select("*").
+		From("users", "").
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, `SELECT * FROM "users"`, sql)
+	assert.Equal(t, []interface{}{}, args)
+}
+
+func TestSelectFromAliasWithWhere_Psql(t *testing.T) {
+	sql, args, err := getPsqlBuilder().
+		Select("t.id", "t.name").
+		From("users", "t").
+		Where("t.status", "=", "active").
+		OrderByDesc("t.id").
+		Limit(1).
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, `SELECT "t"."id", "t"."name" FROM "users" AS "t" WHERE "t"."status" = $1 ORDER BY "t"."id" DESC LIMIT 1`, sql)
+	assert.Equal(t, []interface{}{"active"}, args)
+}
+
 func TestSelectError_Psql(t *testing.T) {
 	sql, args, err := getMysqlBuilder().
 		Select("id; DROP TABLE users").
