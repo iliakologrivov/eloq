@@ -176,6 +176,98 @@ func TestMultipleJoinsArgs(t *testing.T) {
 	assert.Equal(t, []interface{}{"paid", true}, args)
 }
 
+func TestJoinWithAndWithAlias_Psql(t *testing.T) {
+	sql, args, err := getPsqlBuilder().
+		Select("u.id", "p.*").
+		From("users", "u").
+		JoinWith("profiles", func(j *JoinBuilder) {
+			j.As("p").On("p.user_id", "=", "u.id")
+		}).
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, `SELECT "u"."id", "p".* FROM "users" AS "u" INNER JOIN "profiles" AS "p" ON "p"."user_id" = "u"."id"`, sql)
+	assert.Empty(t, args)
+
+	sql, args, err = getMysqlBuilder().
+		Select("u.id", "p.*").
+		From("users", "u").
+		JoinWith("profiles", func(j *JoinBuilder) {
+			j.As("p").On("p.user_id", "=", "u.id")
+		}).
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, "SELECT `u`.`id`, `p`.* FROM `users` AS `u` INNER JOIN `profiles` AS `p` ON `p`.`user_id` = `u`.`id`", sql)
+	assert.Empty(t, args)
+}
+
+func TestComplexQueryWithAliases_Psql(t *testing.T) {
+	sql, args, err := getPsqlBuilder().
+		Select("u.id", "u.name", "u.status", "u.created_at", "o.*").
+		From("users", "u").
+		JoinWith("profiles", func(j *JoinBuilder) {
+			j.As("p").On("p.user_id", "=", "u.id")
+		}).
+		JoinWith("orders", func(j *JoinBuilder) {
+			j.As("o").On("o.profile_id", "=", "p.id")
+		}).
+		WhereNull("p.deleted_at").
+		Where("p.status", "=", "active").
+		Where("u.status", "=", "active").
+		Where("o.status", "=", "active").
+		OrderBy("p.priority", "ASC").
+		OrderBy("u.id", "ASC").
+		Limit(5).
+		Suffix("FOR UPDATE OF u SKIP LOCKED").
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t,
+		`SELECT "u"."id", "u"."name", "u"."status", "u"."created_at", "o".* FROM "users" AS "u" INNER JOIN "profiles" AS "p" ON "p"."user_id" = "u"."id" INNER JOIN "orders" AS "o" ON "o"."profile_id" = "p"."id" WHERE "p"."deleted_at" IS NULL AND "p"."status" = $1 AND "u"."status" = $2 AND "o"."status" = $3 ORDER BY "p"."priority" ASC, "u"."id" ASC LIMIT 5 FOR UPDATE OF u SKIP LOCKED`,
+		sql,
+	)
+	assert.Equal(t, []interface{}{"active", "active", "active"}, args)
+
+	sql, args, err = getMysqlBuilder().
+		Select("u.id", "u.name", "u.status", "u.created_at", "o.*").
+		From("users", "u").
+		JoinWith("profiles", func(j *JoinBuilder) {
+			j.As("p").On("p.user_id", "=", "u.id")
+		}).
+		JoinWith("orders", func(j *JoinBuilder) {
+			j.As("o").On("o.profile_id", "=", "p.id")
+		}).
+		WhereNull("p.deleted_at").
+		Where("p.status", "=", "active").
+		Where("u.status", "=", "active").
+		Where("o.status", "=", "active").
+		OrderBy("p.priority", "ASC").
+		OrderBy("u.id", "ASC").
+		Limit(5).
+		Suffix("FOR UPDATE OF u SKIP LOCKED").
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t,
+		"SELECT `u`.`id`, `u`.`name`, `u`.`status`, `u`.`created_at`, `o`.* FROM `users` AS `u` INNER JOIN `profiles` AS `p` ON `p`.`user_id` = `u`.`id` INNER JOIN `orders` AS `o` ON `o`.`profile_id` = `p`.`id` WHERE `p`.`deleted_at` IS NULL AND `p`.`status` = ? AND `u`.`status` = ? AND `o`.`status` = ? ORDER BY `p`.`priority` ASC, `u`.`id` ASC LIMIT 5 FOR UPDATE OF u SKIP LOCKED",
+		sql,
+	)
+	assert.Equal(t, []interface{}{"active", "active", "active"}, args)
+}
+
+func TestJoinWithoutAlias_Psql(t *testing.T) {
+	sql, args, err := getPsqlBuilder().
+		Select("*").
+		From("users").
+		Join("posts", "posts.user_id", "=", "users.id").
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t, `SELECT * FROM "users" INNER JOIN "posts" ON "posts"."user_id" = "users"."id"`, sql)
+	assert.Empty(t, args)
+}
+
 func TestMultipleJoinsAndWhere(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
 		Select("*").

@@ -5,6 +5,7 @@ import "strings"
 type joinClause struct {
 	joinType string // INNER, LEFT, RIGHT
 	table    string
+	alias    string
 
 	ons    []joinOnClause
 	wheres []whereClause
@@ -50,6 +51,15 @@ func (b *baseBuilder) renderJoins(
 			return nil, startIndex, err
 		}
 		sql.WriteString(tbl)
+
+		if j.alias != "" {
+			alias, err := b.quoteIdentifier(j.alias)
+			if err != nil {
+				return nil, startIndex, err
+			}
+			sql.WriteString(" AS ")
+			sql.WriteString(alias)
+		}
 
 		if len(j.ons) == 0 && len(j.wheres) == 0 {
 			continue

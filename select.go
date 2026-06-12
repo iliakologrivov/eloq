@@ -441,6 +441,7 @@ func (b *SelectBuilder) addJoinWith(joinType, table string, fn func(*JoinBuilder
 		table:    table,
 		ons:      jb.ons,
 		wheres:   jb.wheres,
+		alias:    jb.alias,
 	}
 
 	b.joins = append(b.joins, j)

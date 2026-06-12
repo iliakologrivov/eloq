@@ -3,6 +3,7 @@ package eloq
 type JoinBuilder struct {
 	ons    []joinOnClause
 	wheres []whereClause
+	alias  string
 }
 
 func (j *JoinBuilder) On(left, operator, right string) *JoinBuilder {
@@ -48,5 +49,11 @@ func (j *JoinBuilder) OrWhere(column string, args ...interface{}) *JoinBuilder {
 		value:    args[0],
 		isOr:     true,
 	})
+	return j
+}
+
+func (j *JoinBuilder) As(alias string) *JoinBuilder {
+	j.alias = alias
+
 	return j
 }

@@ -135,18 +135,92 @@ sql, args, _ := eloq.NewBuilder().
 	ToSql()
 ```
 
+### Алиас таблицы (FROM ... AS)
+
+`From()` и `Table()` принимают необязательный второй аргумент — алиас таблицы:
+
+```go
+sql, args, _ := eloq.NewBuilder().
+	PlaceholderFormat(eloq.Dollar).
+	QuoteWith(eloq.DoubleQuote).
+	Select("t.id").
+	From("tasks", "t").
+	OrderByDesc("t.id").
+	Limit(1).
+	ToSql()
+```
+
+Результат:
+
+```sql
+SELECT "t"."id" FROM "tasks" AS "t" ORDER BY "t"."id" DESC LIMIT 1
+```
+
 ### JOIN
 
-Поддерживаются:
+Два уровня работы с JOIN:
 
-- `Join`, `LeftJoin`, `RightJoin`
-- `JoinWith` / `LeftJoinWith` / `RightJoinWith` (через `JoinBuilder`)
-- `JoinRaw`
+**Простой** — `Join`, `LeftJoin`, `RightJoin` — фасады для быстрого JOIN с одним условием `ON` (без алиаса и доп. условий):
+
+```go
+sql, args, _ := eloq.NewBuilder().
+	PlaceholderFormat(eloq.Dollar).
+	QuoteWith(eloq.DoubleQuote).
+	Select("*").
+	From("users").
+	Join("posts", "posts.user_id", "=", "users.id").
+	ToSql()
+```
+
+**Расширенный** — `JoinWith`, `LeftJoinWith`, `RightJoinWith` — через `JoinBuilder`, где можно задать алиас, несколько условий `ON`/`OrOn`, а также `Where`/`OrWhere` внутри `ON (...)`:
+
+```go
+sql, args, _ := eloq.NewBuilder().
+	PlaceholderFormat(eloq.Dollar).
+	QuoteWith(eloq.DoubleQuote).
+	Select("u.id", "p.*").
+	From("users", "u").
+	JoinWith("profiles", func(j *eloq.JoinBuilder) {
+		j.As("p").On("p.user_id", "=", "u.id")
+	}).
+	ToSql()
+```
+
+Результат:
+
+```sql
+SELECT "u"."id", "p".* FROM "users" AS "u" INNER JOIN "profiles" AS "p" ON "p"."user_id" = "u"."id"
+```
+
+Также доступен `JoinRaw` для произвольного SQL.
 
 `JoinBuilder`:
 
-- `On`, `OrOn`
-- `Where`, `OrWhere` (условия внутри `ON (...)`)
+- `As(alias)` — алиас присоединяемой таблицы
+- `On`, `OrOn` — условия соединения
+- `Where`, `OrWhere` — дополнительные условия внутри `ON (...)`
+
+Пример сложного запроса:
+
+```go
+sql, args, _ := eloq.NewBuilder().
+	PlaceholderFormat(eloq.Dollar).
+	QuoteWith(eloq.DoubleQuote).
+	Select("u.id", "u.name", "o.*").
+	From("users", "u").
+	JoinWith("profiles", func(j *eloq.JoinBuilder) {
+		j.As("p").On("p.user_id", "=", "u.id")
+	}).
+	JoinWith("orders", func(j *eloq.JoinBuilder) {
+		j.As("o").On("o.profile_id", "=", "p.id")
+	}).
+	WhereNull("p.deleted_at").
+	Where("p.status", "=", "active").
+	OrderBy("p.priority", "ASC").
+	Limit(5).
+	Suffix("FOR UPDATE OF u SKIP LOCKED").
+	ToSql()
+```
 
 ### GROUP / HAVING / ORDER / LIMIT / OFFSET
 
