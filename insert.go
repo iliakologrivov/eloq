@@ -15,7 +15,7 @@ type InsertBuilder struct {
 }
 
 type onConflictClause struct {
-	target     string
+	target     []string
 	doNothing  bool
 	doUpdates  []string
 	doUpdateKV map[string]interface{}
@@ -23,7 +23,7 @@ type onConflictClause struct {
 
 type OnConflictBuilder struct {
 	insertBuilder *InsertBuilder
-	target        string
+	target        []string
 }
 
 func (ocb *OnConflictBuilder) DoNothing() *InsertBuilder {
@@ -65,31 +65,22 @@ func (b *InsertBuilder) Returning(columns ...string) *InsertBuilder {
 }
 
 func (b *InsertBuilder) OnConflict(target ...string) *OnConflictBuilder {
-	targetCol := ""
-	if len(target) > 0 {
-		targetCol = target[0]
-	}
 	return &OnConflictBuilder{
 		insertBuilder: b,
-		target:        targetCol,
+		target:        target,
 	}
 }
 
 func (b *InsertBuilder) OnConflictDoNothing(target ...string) *InsertBuilder {
-	targetCol := ""
-	if len(target) > 0 {
-		targetCol = target[0]
-	}
-
 	b.onConflict = &onConflictClause{
-		target:    targetCol,
+		target:    target,
 		doNothing: true,
 	}
 
 	return b
 }
 
-func (b *InsertBuilder) OnConflictDoUpdate(target string, updateColumns ...string) *InsertBuilder {
+func (b *InsertBuilder) OnConflictDoUpdate(target []string, updateColumns []string) *InsertBuilder {
 	b.onConflict = &onConflictClause{
 		target:    target,
 		doNothing: false,
@@ -227,13 +218,18 @@ func (b *InsertBuilder) ToSql() (string, []interface{}, error) {
 	// ON CONFLICT
 	if b.onConflict != nil {
 		sql.WriteString(" ON CONFLICT")
-		if b.onConflict.target != "" {
+		if len(b.onConflict.target) > 0 {
 			sql.WriteString(" (")
-			q, err := b.quoteIdentifier(b.onConflict.target)
-			if err != nil {
-				return "", nil, err
+			for i, t := range b.onConflict.target {
+				if i > 0 {
+					sql.WriteString(", ")
+				}
+				q, err := b.quoteIdentifier(t)
+				if err != nil {
+					return "", nil, err
+				}
+				sql.WriteString(q)
 			}
-			sql.WriteString(q)
 			sql.WriteString(")")
 		}
 		if b.onConflict.doNothing {

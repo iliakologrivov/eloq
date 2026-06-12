@@ -124,6 +124,26 @@ func TestInsertOnConflictUpdate(t *testing.T) {
 	assert.Equal(t, []interface{}{"a@b.com", "John", "John"}, args)
 }
 
+func TestInsertOnConflictMultipleColumns(t *testing.T) {
+	sql, args, err := getPsqlBuilder().
+		Insert("users").
+		Values(map[string]interface{}{
+			"email":  "a@b.com",
+			"name":   "John",
+			"tenant": "acme",
+		}).
+		OnConflict("email", "tenant").
+		DoNothing().
+		ToSql()
+
+	assert.NoError(t, err)
+	assert.Equal(t,
+		`INSERT INTO "users" ("email", "name", "tenant") VALUES ($1, $2, $3) ON CONFLICT ("email", "tenant") DO NOTHING`,
+		sql,
+	)
+	assert.Equal(t, []interface{}{"a@b.com", "John", "acme"}, args)
+}
+
 func TestInsertOnConflictUpdate_DeterministicOrder(t *testing.T) {
 	sql, args, err := getPsqlBuilder().
 		Insert("users").
@@ -131,7 +151,7 @@ func TestInsertOnConflictUpdate_DeterministicOrder(t *testing.T) {
 			"email": "a@b.com",
 			"name":  "John",
 		}).
-		OnConflict("email").
+		OnConflict("email", "role").
 		DoUpdate(map[string]interface{}{
 			"name": "John Updated",
 			"role": "admin",
@@ -141,7 +161,7 @@ func TestInsertOnConflictUpdate_DeterministicOrder(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(
 		t,
-		`INSERT INTO "users" ("email", "name") VALUES ($1, $2) ON CONFLICT ("email") DO UPDATE SET "name" = $3, "role" = $4`,
+		`INSERT INTO "users" ("email", "name") VALUES ($1, $2) ON CONFLICT ("email", "role") DO UPDATE SET "name" = $3, "role" = $4`,
 		sql,
 	)
 	assert.Equal(t, []interface{}{"a@b.com", "John", "John Updated", "admin"}, args)
