@@ -1,6 +1,9 @@
 package eloq
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 type DeleteBuilder struct {
 	baseBuilder
@@ -165,7 +168,7 @@ func (b *DeleteBuilder) addJoin(joinType, table, left, operator, right string) *
 }
 
 func (b *DeleteBuilder) addJoinWith(joinType, table string, fn func(*JoinBuilder)) *DeleteBuilder {
-	jb := &JoinBuilder{}
+	jb := newJoinBuilder(b.Config)
 	fn(jb)
 
 	j := joinClause{
@@ -253,6 +256,10 @@ func (b *DeleteBuilder) ToSql() (string, []interface{}, error) {
 
 	if b.requireWhere && len(b.wheres) == 0 {
 		return "", nil, ErrRequireWhere
+	}
+
+	if len(b.using) > 0 && len(b.joins) > 0 {
+		return "", nil, fmt.Errorf("eloq: DELETE cannot use USING and JOIN simultaneously")
 	}
 
 	// comments

@@ -74,8 +74,9 @@ func (b *baseBuilder) renderWheres(
 
 	var allBindings []interface{}
 	index := startIndex
+	hasPrev := false
 
-	for i, w := range wheres {
+	for _, w := range wheres {
 		// Для вложенных условий получаем временный builder
 		if w.nested != nil {
 			var nestedSQL strings.Builder
@@ -90,7 +91,7 @@ func (b *baseBuilder) renderWheres(
 				continue
 			}
 
-			if i > 0 {
+			if hasPrev {
 				if w.isOr {
 					sql.WriteString(" OR ")
 				} else {
@@ -101,6 +102,7 @@ func (b *baseBuilder) renderWheres(
 			sql.WriteString(nestedStr)
 			sql.WriteByte(')')
 			allBindings = append(allBindings, bindings...)
+			hasPrev = true
 			continue
 		}
 
@@ -118,7 +120,7 @@ func (b *baseBuilder) renderWheres(
 		}
 
 		// Добавляем AND/OR перед условием (кроме первого)
-		if i > 0 {
+		if hasPrev {
 			prefix := " AND "
 			if w.isOr {
 				prefix = " OR "
@@ -134,6 +136,7 @@ func (b *baseBuilder) renderWheres(
 		}
 
 		allBindings = append(allBindings, bindings...)
+		hasPrev = true
 	}
 
 	return allBindings, index, nil
@@ -146,6 +149,29 @@ func (b *baseBuilder) renderWhere(
 	w whereClause,
 	startIndex int,
 ) ([]interface{}, int, error) {
+	// EXISTS не требует column
+	if w.operator == "EXISTS" {
+		sub, ok := w.value.(Subquery)
+		if !ok {
+			return nil, startIndex, fmt.Errorf("eloq: EXISTS operator requires a subquery")
+		}
+
+		subSQL, subArgs, err := sub.builder.ToSql()
+		if err != nil {
+			return nil, startIndex, err
+		}
+
+		if b.placeholder == Dollar && startIndex > 1 {
+			subSQL = shiftDollarPlaceholders(subSQL, startIndex-1)
+		}
+
+		sql.WriteString(w.operator)
+		sql.WriteString(" (")
+		sql.WriteString(subSQL)
+		sql.WriteByte(')')
+		return subArgs, startIndex + len(subArgs), nil
+	}
+
 	col, err := b.quoteIdentifier(w.column)
 	if err != nil {
 		return nil, startIndex, err
@@ -179,27 +205,6 @@ func (b *baseBuilder) renderWhere(
 	}
 
 	switch w.operator {
-	case "EXISTS":
-		sub, ok := w.value.(Subquery)
-		if !ok {
-			return nil, startIndex, fmt.Errorf("eloq: EXISTS operator requires a subquery")
-		}
-
-		subSQL, subArgs, err := sub.builder.ToSql()
-		if err != nil {
-			return nil, startIndex, err
-		}
-
-		if b.placeholder == Dollar && startIndex > 1 {
-			subSQL = shiftDollarPlaceholders(subSQL, startIndex-1)
-		}
-
-		sql.WriteString(w.operator)
-		sql.WriteString(" (")
-		sql.WriteString(subSQL)
-		sql.WriteByte(')')
-		return subArgs, startIndex + len(subArgs), nil
-
 	case "IN":
 		op := w.operator
 		if w.isNot {

@@ -10,7 +10,7 @@ func (b *SelectBuilder) OrHaving(column string, args ...interface{}) *SelectBuil
 	return b
 }
 
-func (b *SelectBuilder) HavingNested(fn func(*SelectBuilder)) *SelectBuilder {
+func (b *SelectBuilder) addHavingNested(fn func(*SelectBuilder), isOr bool) *SelectBuilder {
 	nestedBuilder := &SelectBuilder{
 		baseBuilder: baseBuilder{
 			Config:     b.Config,
@@ -26,7 +26,18 @@ func (b *SelectBuilder) HavingNested(fn func(*SelectBuilder)) *SelectBuilder {
 
 	b.havings = append(b.havings, whereClause{
 		nested: nestedBuilder.havings,
+		isOr:   isOr,
 	})
 
+	return b
+}
+
+func (b *SelectBuilder) HavingNested(fn func(*SelectBuilder)) *SelectBuilder {
+	b.addHavingNested(fn, false)
+	return b
+}
+
+func (b *SelectBuilder) OrHavingNested(fn func(*SelectBuilder)) *SelectBuilder {
+	b.addHavingNested(fn, true)
 	return b
 }

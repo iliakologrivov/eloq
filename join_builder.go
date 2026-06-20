@@ -1,9 +1,19 @@
 package eloq
 
 type JoinBuilder struct {
+	baseBuilder
 	ons    []joinOnClause
 	wheres []whereClause
 	alias  string
+}
+
+func newJoinBuilder(cfg Config) *JoinBuilder {
+	return &JoinBuilder{
+		baseBuilder: baseBuilder{
+			Config:     cfg,
+			queryState: newQueryState(),
+		},
+	}
 }
 
 func (j *JoinBuilder) On(left, operator, right string) *JoinBuilder {
@@ -26,29 +36,12 @@ func (j *JoinBuilder) OrOn(left, operator, right string) *JoinBuilder {
 }
 
 func (j *JoinBuilder) Where(column string, args ...interface{}) *JoinBuilder {
-	if len(args) == 0 {
-		return j
-	}
-
-	j.wheres = append(j.wheres, whereClause{
-		column:   column,
-		operator: "=",
-		value:    args[0],
-	})
+	j.wheres = j.addWhere(j.wheres, false, column, args...)
 	return j
 }
 
 func (j *JoinBuilder) OrWhere(column string, args ...interface{}) *JoinBuilder {
-	if len(args) == 0 {
-		return j
-	}
-
-	j.wheres = append(j.wheres, whereClause{
-		column:   column,
-		operator: "=",
-		value:    args[0],
-		isOr:     true,
-	})
+	j.wheres = j.addWhere(j.wheres, true, column, args...)
 	return j
 }
 

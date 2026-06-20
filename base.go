@@ -107,6 +107,9 @@ func (b *baseBuilder) quoteIdentifier(id string) (string, error) {
 }
 
 func isValidIdentifier(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
 	for _, r := range s {
 		if !(r == '_' || r == '.' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
 			return false

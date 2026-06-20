@@ -433,7 +433,7 @@ func (b *SelectBuilder) addJoin(joinType, table, left, operator, right string) *
 }
 
 func (b *SelectBuilder) addJoinWith(joinType, table string, fn func(*JoinBuilder)) *SelectBuilder {
-	jb := &JoinBuilder{}
+	jb := newJoinBuilder(b.Config)
 	fn(jb)
 
 	j := joinClause{
@@ -489,10 +489,8 @@ func (b *SelectBuilder) WithMeta(m map[string]string) *SelectBuilder {
 	return b
 }
 
-func (b *SelectBuilder) WithContext(ctx interface{}) *SelectBuilder {
-	if c, ok := ctx.(context.Context); ok {
-		b.baseBuilder.WithContext(c)
-	}
+func (b *SelectBuilder) WithContext(ctx context.Context) *SelectBuilder {
+	b.baseBuilder.WithContext(ctx)
 	return b
 }
 
